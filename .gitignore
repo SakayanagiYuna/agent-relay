@@ -9,3 +9,15 @@ processed-tasks.json
 *.log
 .DS_Store
 Thumbs.db
+
+# Agent Relay runtime
+.agent-relay/
+
+# Playwright artifacts
+.playwright-cli/
+
+# Browser profiles
+**/browser-callback-profile/
+
+# Evidence
+.agent-relay/evidence/

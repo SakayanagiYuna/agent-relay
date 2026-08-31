@@ -1,10 +1,10 @@
 # Agent Relay
 
-Agent Relay 是一个在本地运行、按允许列表控制的 Slack-to-Codex 执行中继。它接收经过授权的 `CODEX_TASK` 消息，仅在已配置的仓库中运行 Codex，并返回任务生命周期结果。它不是远程 shell，也不接受任意路径、可执行文件或 CLI 选项。
+Agent Relay 是本地、按 allowlist 控制的 Slack-to-Codex 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。Browser Callback PoC 只执行人工 mock callback，不接入真实 `CODEX_STATUS` 自动触发。
 
 ## 安装与启动
 
-运行要求：Node.js 20+、npm、Codex CLI、已为路由配置的 Git 仓库，以及 Slack Socket Mode 应用。
+要求 Node.js 20+、npm、Codex CLI，以及已配置的 allowlisted repository。
 
 ```powershell
 npm install
@@ -12,51 +12,70 @@ Copy-Item .env.example .env
 npm start
 ```
 
-进程环境变量优先于 `.env`；本地 `.env` 会被忽略且不会上传。缺少或无效的配置、无效路径、Git 信任检查失败、不安全的 sandbox 设置、无效的浏览器设置，或找不到可用的 Codex 可执行文件时，启动会安全失败并停止。
+配置统一使用 `AGENT_RELAY_*` 命名；`.env` 仅供本地使用，不会上传。
 
-## 配置
+## Browser Callback PoC
 
-| 变量 | 用途 |
-| --- | --- |
-| `AGENT_RELAY_WORKER_ID` | 本地 worker ID，须与 `target_worker` 匹配。 |
-| `AGENT_RELAY_ALLOWED_USER_ID`、`AGENT_RELAY_CHATGPT_APP_ID`、`AGENT_RELAY_CHANNEL_ID` | 获授权的 Slack 用户、应用和频道。 |
-| `AGENT_RELAY_ATELIER_OF_MEMORY_PATH`、`AGENT_RELAY_PATH` | allowlist 仓库的本地绝对路径。 |
-| `SLACK_BOT_TOKEN`、`SLACK_APP_TOKEN` | 本地 Slack 凭据。 |
-| `CODEX_SANDBOX_MODE` | `workspace-write`（默认）或 `read-only`。 |
-| `AGENT_RELAY_LOG_LEVEL` | `normal`（默认）或 `debug`；仅输出到终端的脱敏诊断信息。 |
-| `AGENT_RELAY_BROWSER_EVIDENCE_*` | 可选的 Browser Evidence 设置。 |
-| `CODEX_TIMEOUT_MS` | 可选的正数任务超时时间，单位为毫秒。 |
-| `CODEX_BIN` | 可选的 Codex executable 绝对路径覆盖值。 |
+Windows launcher 使用固定的 `process.execPath` 执行 npm 的 `npx-cli.js`，不调用 `.cmd` shim；官方 `@playwright/cli@latest` existing-browser channel attach 使用固定 session `relay-poc`、`shell:false` 和当前 repository cwd。只支持 `msedge` 与 `chrome`，不扫描端口，不读取 profile、cookie、storage 或 state-save。
 
-在 Windows 上，可执行文件发现依次检查 `CODEX_BIN`、各个 PATH 目录中的原生 `codex.exe`，以及 npm-global 原生布局 `%APPDATA%\\npm\\node_modules\\@openai\\codex`。启动时会打印选定的绝对路径。任务不使用 shell，而是通过直接调用 `spawn`、`shell:false` 和 stdin 执行。找不到可用可执行文件时，启动会停止。
+控制页只展示 allowlisted ChatGPT 页面。页面 identity 为 origin + conversation pathname；每次刷新和发送前都会重新核对该 identity，CLI 操作会先对对应的真实 tab 执行官方 `tab-select <index>`，然后才使用可见 textarea 和 Enter。非 ChatGPT tab 会保留其真实 tab index，不会因过滤展示列表而错选当前 tab。
 
-## 任务与 Browser Evidence
+Bind 与 Arm 是两个独立的用户操作：Bind 只保存目标对话，Arm 才开启发送权限；未 Armed 时 callback 和 send 都会被拒绝。绑定对话离开 allowlisted origin、conversation identity 变化或目标消失时会自动 disarm，并清除待发送事件。
 
-发送到已配置 Slack 频道的首行必须是 `CODEX_TASK`。`CODEX_TASK` 和 `CODEX_STATUS` 是稳定的协议名称。路由使用 `agent-relay` 这类逻辑 allowlist 名称；任务文本不能提供 `cwd`、shell、executable 或 CLI flags。
+### Windows Edge 真实手动 E2E
 
-Codex 任务成功完成后，可选的 Browser Evidence 会在 Relay 主机上运行，绝不会在 Codex 子进程或 sandbox 内运行。它只访问已配置的 loopback origins，并在 Slack artifact upload 前，将任务范围内的 PNG 写入被忽略的 `.agent-relay/evidence/<TASK_ID>/` 目录。它不会访问凭据、浏览器配置文件、cookies 或 local storage。
+1. 在正常 Microsoft Edge 中登录 ChatGPT，并打开目标 conversation；同时保留另一个非 ChatGPT tab（例如 Bilibili），用于验证不会误操作当前 tab。
+2. 打开 `edge://inspect/#remote-debugging`，显式启用 “Allow remote debugging for this browser instance”。
+3. 在仓库目录启动官方 channel attach：
 
-## 安全与验证
+   ```powershell
+   npm run browser-callback -- attach --channel msedge
+   ```
 
-中继保留 Slack 身份验证、schema 和路由允许列表、持久化去重、单任务队列、Git 仓库/信任校验、sandbox 限制，以及不经过 shell 的 Codex 直接调用。它不会修改 Git trust，也不会自动 push、deploy、publish 或修改远程服务。
+   不要传入 HTTP endpoint。
+4. 打开 `http://127.0.0.1:8787`，确认列表只显示 allowlisted ChatGPT conversation，并确认页面显示 `Bind`。
+5. 点击目标 conversation 的 `Bind`，确认状态为“已 Bind，未 Armed”；此时点击发送或渲染 callback 应被拒绝。
+6. 点击独立的 `Arm 已绑定对话`，确认状态为 `已 Armed`。
+7. 在 mock callback 中输入 `TASK-POC-001`，选择 `DONE`，点击“渲染事件”，确认显示冻结的 `AGENT_RELAY_EVENT` v1 JSON。
+8. 点击“发送到已绑定对话”，确认事件只通过已绑定 ChatGPT conversation 的可见 UI 输入框和 Enter 发送；确认 Edge 不会被切换到 Bilibili。
+9. 将绑定 conversation 导航到其他 conversation 或离开 ChatGPT origin，确认状态自动回到未 Armed，随后发送被拒绝。
+10. 按 `Ctrl+C` 停止 relay；这不会关闭或清理用户浏览器，也不会修改登录状态。
+
+Chrome 的手动 E2E 与上述步骤相同，将 `msedge`/`edge://inspect` 替换为 `chrome`/`chrome://inspect`。
+
+### 高级 endpoint
+
+仅当用户明确提供 browser-level WebSocket endpoint 时使用：
 
 ```powershell
-node --check listener.js
+$env:AGENT_RELAY_BROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/<id>"
+npm run browser-callback -- attach
+```
+
+endpoint 必须是本地、无认证信息、无 query/hash 的 `ws://.../devtools/browser/<id>`；HTTP endpoint、端口扫描、`DevToolsActivePort`、profile、cookie、私有 ChatGPT API/websocket、CAPTCHA 绕过和 state-save 均被禁止。
+
+## 验证
+
+```powershell
+node --check browser-callback.js
+node --check browser-callback.regression.js
+npm run test:browser-callback
 npm test
 git diff --check
 ```
 
-## Doctor
+`npm run doctor` 是本地只读 readiness diagnostics，不启动浏览器、不读取 secret、不修改 `.env` 或远程服务。
 
-完成设置或迁移后运行 `npm run doctor`。Doctor 以本地只读方式检查 Node/npm、Git 仓库与信任就绪状态、必需的 `AGENT_RELAY_*` 和 Slack 配置、dotenv 格式、Codex 发现/版本/认证状态、可选 Browser Evidence 设置，以及回归测试套件。它不会打印 secret 值、向 Slack 发消息、启动浏览器、修改 `.env`、Git 配置、仓库文件或远程服务。使用 `npm run doctor -- --skip-tests` 可进行更快的配置检查。
+## 配置与 Relay 安全边界
 
-每个检查组都会报告 `PASS`、`WARN` 或 `FAIL`。工作树有未提交改动、停用 Browser Evidence 等 warning 不会阻止就绪；必需配置、Git/trust、Slack auth、Codex execution、格式错误的 dotenv assignment 和失败的测试会阻止就绪。Windows 上 Doctor 会通过当前 Node 进程直接运行 npm CLI JavaScript，而不启动 `.cmd` shim；子进程诊断会区分找不到、调用不支持、权限/策略阻断、超时和子进程非零退出。没有关键检查失败时，Doctor 以 `READY_FOR_RELAY: YES` 和退出码 `0` 结束；否则以退出码 `1` 结束。
-## V5.6 Context Builder
+进程环境变量优先于 `.env`；本地 `.env` 会被忽略且不会上传。Slack 身份验证、schema 与路由 allowlist、持久化去重、单任务队列、Git/trust 校验、sandbox 限制，以及不经过 shell 的 Codex 直接调用均保持启用。Relay 不会自动 push、deploy、publish 或修改远程服务。
 
-V5.6 在任务解析与 Codex 调用之间使用确定性的 Context Builder。它按固定顺序组合最小 Relay/task guidance、根目录 `AGENTS.md` 中的简洁仓库 guidance、任务明确命中的 capability/module guidance，以及完整的当前 instruction。`CODEX_TASK` 仍是 schema_version `1`；既有五个必需字段无需改变。
+配置包括 `AGENT_RELAY_WORKER_ID`、`AGENT_RELAY_ALLOWED_USER_ID`、`AGENT_RELAY_CHATGPT_APP_ID`、`AGENT_RELAY_CHANNEL_ID`、`AGENT_RELAY_ATELIER_OF_MEMORY_PATH`、`AGENT_RELAY_PATH`、`AGENT_RELAY_LOG_LEVEL` 和可选的 `AGENT_RELAY_BROWSER_EVIDENCE_*`；Slack 凭据、`CODEX_BIN` 与 `CODEX_TIMEOUT_MS` 按现有部署需要配置。
 
-Context 选择只使用显式的路径、文件名、模块名和稳定关键词：文档任务选择 `docs`，Doctor 任务选择 `doctor`，Browser Evidence 任务选择 `browser-evidence`。没有命中时不注入 capability context，不使用 LLM 或语义分类；片段有固定顺序、固定措辞和长度上限。Relay 会记录 secret-safe 的字符级 telemetry：task、mandatory、repo、capability、final prompt 字符数及片段名，不记录正文、token、ID、secret 或 `.env`。
+Browser Evidence 仅在 Relay 主机上运行，只访问已配置的 loopback origins，并将任务范围内的 PNG 写入被忽略的 `.agent-relay/evidence/<TASK_ID>/` 目录；它不会访问凭据、浏览器 profile、cookies 或 local storage。
 
-`AGENTS.md` 是 Relay 自己 materialize/select 的 provider-neutral 仓库互操作 guidance；Codex 是否原生读取它只是优化，不是安全或可移植性前提。Prompt guidance 不能替代代码强制的 Slack auth、allowlisted routing、dedup、队列、Git/trust、直接可执行文件调用、`shell:false`、workspace sandbox、approval、Browser Evidence loopback 与 cwd/executable 限制。
+## Doctor 与 Context Builder
 
-压缩示例：旧工单会重复完整安全、仓库和验证说明；V5.6 工单只写“更新 `docs/guide.md`，补充中文安装说明；验收：`npm test` 通过”。稳定内容由 Relay/`AGENTS.md` 提供，任务正文只保留目标、范围和 acceptance。
+`npm run doctor` 以本地只读方式检查 Node/npm、Git/trust、必需配置、dotenv 格式、Codex 发现/版本/认证状态、Browser Evidence 设置和回归测试；不会打印 secret、启动浏览器、修改 `.env`、Git 配置、仓库文件或远程服务。使用 `npm run doctor -- --skip-tests` 可进行更快的配置检查。
+
+Context Builder 按固定顺序组合 Relay/task guidance、根目录 `AGENTS.md`、任务明确命中的 capability/module guidance 和完整 instruction。Context 选择只使用显式路径、文件名、模块名及稳定关键词，不使用 LLM 或语义分类；`AGENTS.md` guidance 不能替代代码强制的 Slack auth、allowlisted routing、dedup、队列、Git/trust、`shell:false`、workspace sandbox、approval、Browser Evidence loopback 与 cwd/executable 限制。
