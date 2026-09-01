@@ -47,6 +47,7 @@ function parseCodexTask(text) {
     target_worker: null,
     target_workspace: null,
     target_repo: null,
+    agent: "codex",
     instruction: null,
     browser_evidence: null,
     browser_url: null,
@@ -79,6 +80,10 @@ function parseCodexTask(text) {
   }
   for (const key of ["task_id", "target_worker", "target_workspace", "target_repo", "instruction"]) {
     if (!task[key]) throw schemaValidationError(`missing_${key}`, "required_fields", recognizedFields);
+  }
+
+  if (!new Set(["codex", "grok"]).has(task.agent)) {
+    throw schemaValidationError("unsupported_agent", "agent", recognizedFields);
   }
 
   const browserFieldsPresent = [task.browser_evidence, task.browser_url, task.browser_viewport]

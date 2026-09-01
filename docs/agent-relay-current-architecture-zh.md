@@ -4,7 +4,7 @@
 
 本版本相对 V5.6 的完整变更如下：
 
-- 协议：`CODEX_TASK` 与 `CODEX_STATUS` 名称、schema version `1` 和任务必填字段保持不变。parser 在拒绝时记录可解析的 `task_id`、`stage=schema_validation`、更细的 parse stage、recognized fields 与 reason；该提取仅用于审计，不能放宽接收 schema，拒绝工单仍可按编号追踪。
+- 协议：`CODEX_TASK` 与 `CODEX_STATUS` 名称、schema version `1` 和任务必填字段保持不变。可选 `agent` 扩展字段省略时固定为 `codex`，也可显式为 `grok`（底层为 Grok Build CLI）；不做自动选择或失败 fallback。parser 在拒绝时记录可解析的 `task_id`、`stage=schema_validation`、更细的 parse stage、recognized fields 与 reason；该提取仅用于审计，不能放宽接收 schema，拒绝工单仍可按编号追踪。
 - 生命周期：新增显式 execution state 模块，状态仅允许 `START -> RUNNING -> DONE | FAILED | BLOCKED`。heartbeat 每 30 秒更新本机 context，在 debug 终端/log 中输出，既不发布 Slack `RUNNING`，也不触发 Browser Callback。
 - Slack 审计：终态 `CODEX_STATUS` 统一输出 duration、Git commit、changed files、diff summary 与可识别的 test result；`DONE` 使用 summary，`FAILED`/`BLOCKED` 使用 reason。完整 stdout、stderr、diff 和 heartbeat 继续不进入 Slack。
 - 终态分发：`task_terminal` event 在 Slack 终态成功后由 Browser Callback 和 Human Notification 并行独立消费。Browser 或通知失败只留下本机 `BROWSER_CALLBACK_FAILED` / `HUMAN_NOTIFY_FAILED`，不修改 Slack 事实状态。
@@ -18,7 +18,7 @@
 Agent Relay 将 ChatGPT/人工规划与本地受控执行分离：
 
 ```text
-ChatGPT / human -> CODEX_TASK -> Slack -> Agent Relay -> Codex -> allowlisted local repo
+ChatGPT / human -> CODEX_TASK -> Slack -> Agent Relay -> Codex (default) / Grok Build (selected) -> allowlisted local repo
                                       <- CODEX_STATUS START / DONE / BLOCKED / FAILED
 Relay local debug terminal/log       <- HEARTBEAT（每 30 秒）
                                       -> terminal fan-out -> optional loopback Browser Callback -> bound ChatGPT conversation
@@ -87,9 +87,9 @@ Browser Callback 使用本机 `.agent-relay/callback-registry.json` 保存 callb
 
 迁移或重新配置后可运行 `npm run doctor`。Doctor 以只读方式检查 Node/npm、Git trust 与允许列表仓库、必需配置和 dotenv 格式、Slack 只读认证、Codex 发现/版本/认证状态，以及可选 Browser Evidence 配置，并默认运行 `npm test`。输出按 `PASS`/`WARN`/`FAIL` 分组；工作树有未提交改动和关闭 Browser Evidence 属于 warning，不会单独阻止就绪。缺少必需配置、Git/Slack/Codex 检查失败、dotenv assignment 拼接错误或回归测试失败会返回退出码 `1`。Doctor 不会打印 token、认证材料或配置值，也不会修改 `.env`、Git 或仓库状态；可用 `npm run doctor -- --skip-tests` 跳过测试。
 
-## Codex 发现与执行边界
+## Worker agent 发现与执行边界
 
-在 Windows 上，可执行文件解析遵循 `CODEX_BIN`，然后在 PATH 中查找原生 `codex.exe`，再检查 npm-global 原生 package layout，并记录解析出的绝对路径。任务执行使用直接调用 `spawn`、`shell:false` 和 stdin；Slack 不能控制 shell、cwd、executable 或 CLI options。
+在 Windows 上，Codex 可执行文件解析遵循 `CODEX_BIN`，然后在 PATH 中查找原生 `codex.exe`，再检查 npm-global 原生 package layout。`agent: grok` 使用可选 `AGENT_RELAY_GROK_BIN`，否则仅在该任务执行时从 PATH 发现 `grok.exe`。两种 worker 都使用直接调用 `spawn` 和 `shell:false`；Slack 不能控制 shell、cwd、executable 或 CLI options。Codex 从 stdin 读取 prompt；Grok Build 使用 Relay 创建、进程退出即删除的提示文件，以免 Slack 文本成为命令行参数。Grok 以 `workspace` sandbox、`acceptEdits` 和 `--no-subagents` 运行，Relay 不会启用 `--always-approve`。Grok 登录、API key 与其本机配置保持由 Grok CLI 管理。
 
 ## Browser Evidence
 
@@ -110,4 +110,4 @@ Context Builder 使用显式、可测试的固定规则：命中 `docs`、README
 
 `AGENTS.md` 由 Context Builder 主动读取并 materialize/select，提供 Agent Relay 身份、简体中文文档约定、稳定协议名、`AGENT_RELAY_*` 命名和 Doctor/Browser Evidence 边界。provider 原生读取 `AGENTS.md` 只是 interoperability optimization，不是安全或 portability 依赖。字符级 telemetry 只包含 task、mandatory、repo、capability、final prompt 字符数和片段名，禁止正文、token、ID、secret、`.env` 或私有 operational metadata；完整 Usage Accounting 延后到 V6。
 
-Context Builder 只压缩重复 prompt 文本，不改变 Relay 的代码强制安全边界。Provider Abstraction、Grok integration、automatic routing、quota failover、token/cost accounting、schema v2 和 policy DSL/manifest 均延后到 V6。
+Context Builder 只压缩重复 prompt 文本，不改变 Relay 的代码强制安全边界。当前仅支持显式 `codex` 与 `grok`；automatic routing、quota failover、跨 provider 的统一 token/cost accounting、schema v2 和 policy DSL/manifest 仍延后。

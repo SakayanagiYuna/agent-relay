@@ -49,6 +49,11 @@ function getParseError(text) {
 }
 
 assert.strictEqual(parseCodexTask(validTask).task_id, "TASK-SCHEMA-001");
+assert.strictEqual(parseCodexTask(validTask).agent, "codex", "agent defaults to codex for existing tasks");
+assert.strictEqual(parseCodexTask(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nagent: grok")).agent, "grok");
+const unsupportedAgentError = getParseError(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nagent: claude"));
+assert.match(unsupportedAgentError.message, /unsupported_agent/);
+assert.strictEqual(unsupportedAgentError.parseStage, "agent");
 const missingSchemaError = getParseError(validTask.replace("schema_version: 1\n", ""));
 assert.match(missingSchemaError.message, /unsupported_schema_version/);
 assert.strictEqual(missingSchemaError.parseStage, "schema_version");

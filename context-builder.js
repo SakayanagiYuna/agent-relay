@@ -6,13 +6,13 @@ const path = require("path");
 const MAX_REPO_GUIDANCE_CHARS = 1800;
 
 const MANDATORY_GUIDANCE = [
-  "You are executing an authorized Agent Relay CODEX_TASK.",
+  "You are executing an authorized Agent Relay CODEX_TASK through its selected worker agent.",
   "Work only inside the configured repository and do not expand task scope.",
   "Edit files only when the user instruction requires edits; never edit merely to prove workspace-write.",
   "Do not deploy, publish, push, upload, sync remote assets, modify remote services, or bypass sandbox/approval.",
   "Do not run git push, wrangler deploy, rclone sync/copy, or equivalent remote-write commands.",
   "Do not access secrets unless explicitly necessary and permitted; do not alter authentication or security settings.",
-  "Do not alter Codex configuration or system security settings.",
+  "Do not alter worker-agent configuration or system security settings.",
   "If the task cannot be completed inside the sandbox, stop and explain the required permission.",
   "For write tasks, report changed files and verification; if none changed, say so.",
   "End the final response with one standalone line: AGENT_RELAY_RESULT: DONE, FAILED, or BLOCKED. Use FAILED when requested acceptance was not completed, even if the Codex process itself can exit normally.",
@@ -32,7 +32,7 @@ const CAPABILITY_FRAGMENTS = Object.freeze({
   browser: {
     name: "browser-evidence",
     cues: /browser[ -]?evidence|browser-evidence|screenshot|截图|浏览器证据/i,
-    text: "Browser Evidence: Relay host-only post-Codex capture; use configured loopback origins and existing browser safety boundaries. The worker must not launch browsers, capture screenshots, or upload artifacts.",
+    text: "Browser Evidence: Relay host-only post-worker capture; use configured loopback origins and existing browser safety boundaries. The worker must not launch browsers, capture screenshots, or upload artifacts.",
   },
 });
 
@@ -73,7 +73,7 @@ function buildContext({ task, route, repoRoot = route.local_path }) {
     `Task ID: ${task.task_id}\nWorkspace: ${route.workspace_id}\nRepository: ${route.repo_id}\nWorking directory: ${route.local_path}\nSandbox mode: ${route.sandboxMode}`,
     `Repository guidance:\n${repoGuidance}`,
     capabilityText ? `Relevant capability guidance:\n${capabilityText}` : "",
-    task.browser_evidence ? "Browser evidence is executed only by the Relay host after this Codex process exits DONE. Do not launch a browser, capture screenshots, or upload artifacts yourself." : "",
+    task.browser_evidence ? "Browser evidence is executed only by the Relay host after this worker process exits DONE. Do not launch a browser, capture screenshots, or upload artifacts yourself." : "",
     `User instruction:\n${taskInstruction}`,
   ].filter(Boolean);
   const prompt = sections.join("\n\n");

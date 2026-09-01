@@ -19,6 +19,8 @@ assert.match(
   /task\.browser_evidence && result\.status === "DONE"/,
   "browser evidence must be terminal-DONE gated"
 );
+assert.match(listener, /validateBrowserRequests\(task\.browser_evidence, BROWSER_ALLOWED_ORIGINS\)/, "Relay must validate every requested viewport before capture");
+assert.match(listener, /request: \{ mode: "screenshot", \.\.\.request \}/, "each validated viewport must retain screenshot mode during capture");
 assert.match(
   worker,
   /Browser evidence is executed only by the Relay host after this Codex process exits DONE/,

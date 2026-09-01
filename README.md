@@ -1,12 +1,13 @@
 # Agent Relay
 
-Agent Relay 是本地、按 allowlist 控制的 Slack-to-Codex 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。终态 `CODEX_STATUS` 成功发送后，Relay 从同一个 `task_terminal` event 独立 fan-out 到可选 Browser Callback 和 Human Notification；Slack 仍是唯一生命周期事实来源。
+Agent Relay 是本地、按 allowlist 控制的 Slack-to-agent 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。工单默认使用 Codex，也可显式选择 Grok Build；终态 `CODEX_STATUS` 成功发送后，Relay 从同一个 `task_terminal` event 独立 fan-out 到可选 Browser Callback 和 Human Notification；Slack 仍是唯一生命周期事实来源。
 
 ## V5.7 / v1.1.0
 
 本版本相对 V5.6 的完整变更如下：
 
 - `CODEX_TASK` 协议仍固定为 schema version `1` 和既有必填字段；parser 为拒绝路径补充可审计的 `task_id` 提取、解析阶段、已识别字段和明确 reason，拒绝工单不会进入执行，编号可被审计追踪。
+- `agent` 是 `CODEX_TASK v1` 的可选扩展字段：省略或 `agent: codex` 使用既有 Codex Worker；`agent: grok` 使用本机 Grok Build CLI。Relay 不做自动 agent 路由或失败 fallback，Grok 任务使用 `workspace` sandbox、`acceptEdits` 权限模式和提示文件，绝不启用 `--always-approve`；若其 JSON 终态包含兼容 usage，仍进入既有本机账本和 Slack 审计。
 - 在配置频道发送精确文本 `AGENT_RELAY_HEALTH` 可探活所有收到该消息的 Relay 实例。探活不校验发件人、不会进入任务队列；每台实例立即回复自己的 `worker`、`running_tasks` 和 `queued_tasks`。
 - 每个终态任务会将 Codex JSONL 中实际返回的 token usage 写入本机 `state/usage-accounting.json`，并在 `CODEX_STATUS` 中以紧凑 `token_usage` 字段报告；CLI 未返回 usage 时明确报告 `unavailable`，不估算费用。
 - 执行状态统一为 `START -> RUNNING -> DONE | FAILED | BLOCKED`。30 秒 heartbeat 改为仅在 `AGENT_RELAY_LOG_LEVEL=debug` 的本地观测信号，不再向 Slack 产生周期 `RUNNING` 消息，也不会触发 callback。
@@ -214,7 +215,7 @@ git diff --check
 
 进程环境变量优先于 `.env`；本地 `.env` 会被忽略且不会上传。Slack 身份验证、schema 与路由 allowlist、持久化去重、单任务队列、Git/trust 校验、sandbox 限制，以及不经过 shell 的 Codex 直接调用均保持启用。Relay 不会自动 push、deploy、publish 或修改远程服务。
 
-配置包括 `AGENT_RELAY_WORKER_ID`、`AGENT_RELAY_ALLOWED_USER_ID`、`AGENT_RELAY_CHATGPT_APP_ID`、`AGENT_RELAY_CHANNEL_ID`、`AGENT_RELAY_ATELIER_OF_MEMORY_PATH`、`AGENT_RELAY_PATH`、`AGENT_RELAY_LOG_LEVEL` 和可选的 `AGENT_RELAY_BROWSER_EVIDENCE_*`、`AGENT_RELAY_BROWSER_CALLBACK_URL`；Slack 凭据、`CODEX_BIN` 与 `CODEX_TIMEOUT_MS` 按现有部署需要配置。
+配置包括 `AGENT_RELAY_WORKER_ID`、`AGENT_RELAY_ALLOWED_USER_ID`、`AGENT_RELAY_CHATGPT_APP_ID`、`AGENT_RELAY_CHANNEL_ID`、`AGENT_RELAY_ATELIER_OF_MEMORY_PATH`、`AGENT_RELAY_PATH`、`AGENT_RELAY_LOG_LEVEL` 和可选的 `AGENT_RELAY_BROWSER_EVIDENCE_*`、`AGENT_RELAY_BROWSER_CALLBACK_URL`、`AGENT_RELAY_GROK_BIN`；Slack 凭据、`CODEX_BIN` 与 `CODEX_TIMEOUT_MS` 按现有部署需要配置。Grok 登录和 API key 由 Grok CLI 的本机身份配置管理，不会由 Relay 读取或写入 Slack。
 
 Browser Evidence 仅在 Relay 主机上运行，只访问已配置的 loopback origins，并将任务范围内的 PNG 写入被忽略的 `.agent-relay/evidence/<TASK_ID>/` 目录；它不会访问凭据、浏览器 profile、cookies 或 local storage。
 

@@ -7,13 +7,13 @@
 | 事项 | ChatGPT / 提单人 | Codex worker | Relay host |
 | --- | --- | --- | --- |
 | 目标、范围、验收 | 必须明确 | 按工单执行 | 不推断或扩展 |
-| 代码、文档、测试、只读诊断 | 说明范围 | 执行并报告 | 路由、隔离、审计 |
+| 代码、文档、测试、只读诊断 | 说明范围，并按需选择 agent | 执行并报告 | 路由、隔离、审计 |
 | `CODEX_STATUS` | 阅读终态 | 提供最终摘要 | 发送唯一生命周期事实 |
 | Browser Evidence 截图与上传 | 提供完整结构化三元组 | **不得**启动浏览器、截图或上传 | worker `DONE` 后独立截图并上传 Slack |
 | ChatGPT 登录、Bind + Arm、callback target | 用户手动完成 | 不得操作 | 提供本机 Runtime / 控制页 / callback |
 | `.env`、token、cookie、profile、Slack 凭据 | 不写入工单 | 不读取或修改 | 仅按本机配置使用必要值 |
 
-`CODEX_TASK` 只用于让 Codex worker 在 allowlisted 仓库内执行工作。截图、Slack 上传和 callback 都是 Relay host 的职责，不能通过 instruction 转交给 worker。
+`CODEX_TASK` 只用于让选定的 worker agent 在 allowlisted 仓库内执行工作。省略 `agent` 时固定使用 `codex`；目前可显式选择 `grok`（底层为 Grok Build CLI）。截图、Slack 上传和 callback 都是 Relay host 的职责，不能通过 instruction 转交给 worker。
 
 ## 所有工单的字段顺序
 
@@ -26,6 +26,7 @@ task_id: TASK-XXX
 target_worker: <WORKER_ID>
 target_workspace: <WORKSPACE_ID>
 target_repo: <ALLOWLIST_REPO_ID>
+# 可选：agent: codex（默认）或 agent: grok
 # 可选 Browser Evidence 字段只能放在这里
 instruction: |
   目标：<任务特有目标>
@@ -33,7 +34,25 @@ instruction: |
   验收：<预期结果与验证方式>
 ```
 
-必填字段为 `schema_version`、`task_id`、`target_worker`、`target_workspace`、`target_repo` 和 `instruction`。`target_repo` 是 allowlist 逻辑名称，不是文件系统路径。不要填写 `cwd`、shell、executable、`--cd`、`--sandbox`、approval、Git trust flags 或本机配置项。
+必填字段为 `schema_version`、`task_id`、`target_worker`、`target_workspace`、`target_repo` 和 `instruction`。`agent` 是可选字段，合法值为 `codex`（默认）和 `grok`；不支持自动选择、fallback 或模型名。`target_repo` 是 allowlist 逻辑名称，不是文件系统路径。不要填写 `cwd`、shell、executable、`--cd`、`--sandbox`、approval、Git trust flags 或本机配置项。
+
+## 选择 `grok`
+
+仅当该主机已安装并登录 Grok Build 时，才在 `instruction` 前加上 `agent: grok`。Relay 以 Grok Build 的 `workspace` sandbox 和 `acceptEdits` 权限模式执行，不会启用 `--always-approve`；需要 shell 或额外权限的工作会按 worker 结果变为 `BLOCKED`，再由提单人决定下一步。Grok 登录、`XAI_API_KEY`、`~/.grok` 配置和计费均是本机 Grok 的职责，不能写入 Slack 工单。
+
+```text
+CODEX_TASK
+schema_version: 1
+task_id: TASK-XXX
+target_worker: dev-pc-a
+target_workspace: baiyuan
+target_repo: agent-relay
+agent: grok
+instruction: |
+  目标：实现 <功能>。
+  范围：仅修改 <文件> 并运行 <验证>。
+  验收：报告变更、验证结果和未完成项。
+```
 
 每张工单使用新的 `task_id`；拒绝、失败或重试都不能复用旧 ID，因为 Relay 会持久化去重状态。
 
@@ -73,7 +92,7 @@ instruction: |
 
 ## 类型 C：Browser Evidence 截图验证
 
-完整三元组必须位于 `instruction: |` **之前**。`browser_url` 只能是已配置的 HTTP/HTTPS loopback origin，且不能带 credentials、query 或 fragment；viewport 只能是 `desktop`、`intermediate` 或 `mobile`。
+完整三元组必须位于 `instruction: |` **之前**。`browser_url` 只能是已配置的 HTTP/HTTPS loopback origin，且不能带 credentials、query 或 fragment；`browser_viewport` 可写单个 `desktop`、`intermediate` 或 `mobile`，也可用逗号列出多个不同值（如 `desktop,mobile`）。Relay 会分别截图并上传每个 viewport。
 
 ```text
 CODEX_TASK

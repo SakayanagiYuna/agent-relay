@@ -63,6 +63,16 @@ function validateBrowserRequest(request, allowedOrigins) {
   return { url: url.toString(), viewport: request.viewport };
 }
 
+function validateBrowserRequests(request, allowedOrigins) {
+  if (!request || request.mode !== "screenshot") return [];
+  const rawViewports = Array.isArray(request.viewport) ? request.viewport : String(request.viewport || "").split(",");
+  const viewports = rawViewports.map((value) => String(value).trim()).filter(Boolean);
+  if (!viewports.length || viewports.length > Object.keys(VIEWPORTS).length || new Set(viewports).size !== viewports.length) {
+    throw new Error("browser_viewport_not_allowed");
+  }
+  return viewports.map((viewport) => validateBrowserRequest({ ...request, viewport }, allowedOrigins));
+}
+
 function isAllowedResourceUrl(rawUrl, allowedOrigins) {
   if (rawUrl.startsWith("data:")) {
     return true;
@@ -247,4 +257,5 @@ module.exports = {
   resolveBrowserExecutablePath,
   openEvidenceBrowser,
   validateBrowserRequest,
+  validateBrowserRequests,
 };

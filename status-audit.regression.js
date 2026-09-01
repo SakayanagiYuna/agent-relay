@@ -14,6 +14,8 @@ assert.doesNotMatch(done, /HEARTBEAT|elapsed_ms|last_heartbeat_at/, "heartbeat m
 const withEvidence = buildStatusText({ status: "DONE", task, route, workerId: "worker-a", duration: "00m42s", gitAudit: audit, evidenceReference: { fileId: "F085ABC", permalink: "https://workspace.slack.com/files/U1/F085ABC/evidence.png" } });
 assert.match(withEvidence, /evidence_file_id: F085ABC/);
 assert.match(withEvidence, /evidence_permalink: https:\/\/workspace\.slack\.com\/files\/U1\/F085ABC\/evidence\.png/);
+const grokStatus = buildStatusText({ status: "DONE", task: { ...task, agent: "grok" }, route, workerId: "worker-a", duration: "00m42s", gitAudit: audit });
+assert.match(grokStatus, /agent: grok/);
 for (const status of ["FAILED", "BLOCKED"]) {
   const rendered = buildStatusText({ status, task, route, workerId: "worker-a", duration: "00m01s", gitAudit: audit, summary: "Permission denied by sandbox." });
   assert.match(rendered, new RegExp(`status: ${status}`));

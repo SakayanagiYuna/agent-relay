@@ -21,9 +21,9 @@ function extractUsage(event) {
   const usage = event?.usage || event?.response?.usage || event?.result?.usage || event?.turn?.usage;
   if (!usage || typeof usage !== "object") return null;
   const inputTokens = firstCount(usage.input_tokens, usage.inputTokens, usage.prompt_tokens, usage.promptTokens);
-  const cachedInputTokens = firstCount(usage.input_tokens_details?.cached_tokens, usage.input_tokens_details?.cached_input_tokens, usage.inputTokensDetails?.cachedTokens, usage.prompt_tokens_details?.cached_tokens);
+  const cachedInputTokens = firstCount(usage.input_tokens_details?.cached_tokens, usage.input_tokens_details?.cached_input_tokens, usage.inputTokensDetails?.cachedTokens, usage.prompt_tokens_details?.cached_tokens, usage.cache_read_input_tokens, usage.cacheReadInputTokens);
   const outputTokens = firstCount(usage.output_tokens, usage.outputTokens, usage.completion_tokens, usage.completionTokens);
-  const reasoningTokens = firstCount(usage.output_tokens_details?.reasoning_tokens, usage.outputTokensDetails?.reasoningTokens, usage.completion_tokens_details?.reasoning_tokens);
+  const reasoningTokens = firstCount(usage.output_tokens_details?.reasoning_tokens, usage.outputTokensDetails?.reasoningTokens, usage.completion_tokens_details?.reasoning_tokens, usage.reasoning_tokens, usage.reasoningTokens);
   const totalTokens = firstCount(usage.total_tokens, usage.totalTokens, inputTokens !== null && outputTokens !== null ? inputTokens + outputTokens : null);
   if ([inputTokens, cachedInputTokens, outputTokens, reasoningTokens, totalTokens].every((value) => value === null)) return null;
   return { input_tokens: inputTokens, cached_input_tokens: cachedInputTokens, output_tokens: outputTokens, reasoning_tokens: reasoningTokens, total_tokens: totalTokens };

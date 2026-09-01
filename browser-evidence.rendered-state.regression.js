@@ -3,7 +3,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
-const { captureBrowserEvidence } = require("./browser-evidence");
+const { captureBrowserEvidence, validateBrowserRequests } = require("./browser-evidence");
 
 const repoPath = process.cwd();
 const allowedOrigins = ["http://localhost:5173"];
@@ -70,6 +70,8 @@ async function capture(taskId) {
 }
 
 (async () => {
+  assert.deepStrictEqual(validateBrowserRequests({ mode: "screenshot", url: "http://localhost:5173", viewport: "desktop,mobile" }, allowedOrigins), [{ url: "http://localhost:5173/", viewport: "desktop" }, { url: "http://localhost:5173/", viewport: "mobile" }]);
+  assert.throws(() => validateBrowserRequests({ mode: "screenshot", url: "http://localhost:5173", viewport: "desktop,desktop" }, allowedOrigins), /browser_viewport_not_allowed/);
   const success = createPlaywright();
   const evidence = await withMockedPlaywright(success.playwright, () => capture("TEST-RENDERED-STATE"));
   assert.strictEqual(success.calls.bodyLocator, 0, "hidden body must not be used for readiness");

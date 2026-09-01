@@ -9,12 +9,16 @@ const {
   parseLoopbackUrl,
   redactText: redactBrowserText,
   resolveBrowserExecutablePath,
+  validateBrowserRequests,
 } = require("./browser-evidence");
 const { validateRelayCallbackUrl } = require("./browser-callback");
 const { extractCodexTaskId, normalizeSlackText, parseCodexTask } = require("./task-parser");
 const { buildContext } = require("./context-builder");
 const { resolveCodexExecutable } = require("./codex-discovery");
+const { resolveGrokExecutable } = require("./grok-discovery");
+const { executeGrokBuildTask } = require("./grok-worker");
 const { deliverTerminalCallback } = require("./callback-lifecycle");
+const { waitForBrowserEvidenceIndexing } = require("./browser-callback-delay");
 const { createHumanNotificationProvider, createSmtpTransport, readHumanNotificationConfig } = require("./human-notification");
 const { fanoutTerminalEvent } = require("./terminal-fanout");
 const { formatElapsed, createDebugHeartbeatLogger, createExecutionHeartbeat } = require("./execution-heartbeat");
@@ -345,6 +349,9 @@ const MAX_PROGRESS_CHARS = 360;
 // ------------------------------------------------------------
 
 const CODEX_BIN = resolveCodexExecutable({ configuredPath: process.env.CODEX_BIN });
+const GROK_BIN = process.env.AGENT_RELAY_GROK_BIN
+  ? resolveGrokExecutable({ configuredPath: process.env.AGENT_RELAY_GROK_BIN })
+  : null;
 
 
 // ------------------------------------------------------------
@@ -725,15 +732,18 @@ async function fanoutTerminalNotifications({ task, status, elapsedMs, slackRecei
     taskId: task.task_id,
     status,
     elapsedSec: Math.floor(elapsedMs / 1000),
-    deliverBrowser: callbackReady ? (event) => deliverTerminalCallback({
-      taskId: event.task_id,
-      status: event.status,
-      callbackTargetId: browserCallback.callbackTargetId,
-      slackStatusTs: slackReceipt?.ts,
-      slackChannelId: slackReceipt?.channel || CHANNEL_ID,
-      evidenceReference,
-      deliver: (payload) => postBrowserCallback({ payload, endpoint: browserCallback.endpoint }),
-    }) : undefined,
+    deliverBrowser: callbackReady ? async (event) => {
+      if (await waitForBrowserEvidenceIndexing({ evidenceReference })) console.log(`[CALLBACK] task_id=${event.task_id} waiting 30s for Browser Evidence indexing`);
+      return deliverTerminalCallback({
+        taskId: event.task_id,
+        status: event.status,
+        callbackTargetId: browserCallback.callbackTargetId,
+        slackStatusTs: slackReceipt?.ts,
+        slackChannelId: slackReceipt?.channel || CHANNEL_ID,
+        evidenceReference,
+        deliver: (payload) => postBrowserCallback({ payload, endpoint: browserCallback.endpoint }),
+      });
+    } : undefined,
     notifyHuman: (event) => HUMAN_NOTIFICATION_PROVIDER.notify(event),
     diagnostic: (code, error, event) => console.error(`[${code}] task_id=${event.task_id} status=${event.status} provider=${code === "HUMAN_NOTIFY_FAILED" ? HUMAN_NOTIFICATION_PROVIDER.name : "browser"}: ${error.message}`),
   });
@@ -780,21 +790,15 @@ async function runBrowserEvidence({ channelId, task, route }) {
   // worker prompt or the child process: Playwright must never inherit the
   // Codex execution sandbox.
   console.log(`[EVIDENCE] task_id=${task.task_id} host_pid=${process.pid} Relay host capture starting`);
-  const evidence = await captureBrowserEvidence({
-    taskId: task.task_id,
-    route,
-    request: task.browser_evidence,
-    config: {
-      allowedOrigins: BROWSER_ALLOWED_ORIGINS,
-      executablePath: BROWSER_EXECUTABLE_PATH || undefined,
-      timeoutMs: BROWSER_EVIDENCE_TIMEOUT_MS,
-    },
-  });
-  const reference = await uploadBrowserEvidence({ channelId, task, evidence });
-  const errors = evidence.consoleErrors.length
-    ? ` Console errors (bounded): ${evidence.consoleErrors.join(" | ")}`
-    : "";
-  return { reference, summary: `Browser evidence uploaded: ${evidence.filename} (file_id: ${reference.fileId}; ${evidence.viewport.name} ${evidence.viewport.width}x${evidence.viewport.height}; ${evidence.url}; console errors: ${evidence.consoleErrorCount}).${errors}` };
+  const requests = validateBrowserRequests(task.browser_evidence, BROWSER_ALLOWED_ORIGINS);
+  const uploaded = [];
+  for (const request of requests) {
+    const evidence = await captureBrowserEvidence({ taskId: task.task_id, route, request: { mode: "screenshot", ...request }, config: { allowedOrigins: BROWSER_ALLOWED_ORIGINS, executablePath: BROWSER_EXECUTABLE_PATH || undefined, timeoutMs: BROWSER_EVIDENCE_TIMEOUT_MS } });
+    const reference = await uploadBrowserEvidence({ channelId, task, evidence });
+    uploaded.push({ evidence, reference });
+  }
+  const summary = uploaded.map(({ evidence, reference }) => `Browser evidence uploaded: ${evidence.filename} (file_id: ${reference.fileId}; ${evidence.viewport.name} ${evidence.viewport.width}x${evidence.viewport.height}; ${evidence.url}; console errors: ${evidence.consoleErrorCount}).${evidence.consoleErrors.length ? ` Console errors (bounded): ${evidence.consoleErrors.join(" | ")}` : ""}`).join("\n");
+  return { reference: uploaded[0]?.reference, summary };
 }
 
 
@@ -1679,6 +1683,41 @@ async function executeCodexTask({
 // Task lifecycle
 // ------------------------------------------------------------
 
+async function executeSelectedAgentTask({ task, route }) {
+  if (task.agent === "codex") return executeCodexTask({ task, route });
+  if (task.agent !== "grok") throw new Error(`Unsupported task agent: ${task.agent}`);
+
+  const grokExecutable = GROK_BIN || resolveGrokExecutable();
+  const context = buildContext({
+    task,
+    route: { ...route, sandboxMode: "workspace" },
+    repoRoot: route.local_path,
+  });
+
+  console.log(`[WORKER] task_id=${task.task_id} Grok Build Worker starting`);
+  console.log(`repo: ${route.repo_id}`);
+  console.log(`cwd: ${route.local_path}`);
+  console.log("sandbox: workspace");
+  console.log("permission_mode: acceptEdits");
+  console.log(`grok_bin: ${grokExecutable}`);
+  console.log(`[CONTEXT] task_chars=${context.telemetry.taskChars} mandatory_chars=${context.telemetry.mandatoryChars} repo_chars=${context.telemetry.repoChars} capability_chars=${context.telemetry.capabilityChars} final_prompt_chars=${context.telemetry.finalPromptChars} fragments=${context.telemetry.selectedFragments.join(",") || "none"}`);
+  let lastProgressAt = 0;
+
+  return executeGrokBuildTask({
+    task,
+    route,
+    executablePath: grokExecutable,
+    prompt: context.prompt,
+    timeoutMs: CODEX_TIMEOUT_MS,
+    onProgress: ({ activity, chars }) => {
+      const now = Date.now();
+      if (activity !== "tool_activity" && activity !== "turn_completed" && now - lastProgressAt < 2_000) return;
+      lastProgressAt = now;
+      console.log(`[GROK] task_id=${task.task_id} activity=${activity}${chars ? ` chars=${chars}` : ""}`);
+    },
+  });
+}
+
 async function runTaskLifecycle({
   channelId,
   task,
@@ -1702,7 +1741,7 @@ async function runTaskLifecycle({
       route,
 
       summary:
-        `Agent Relay accepted the task. Codex Worker is starting in ${CODEX_SANDBOX_MODE} sandbox.`,
+        `Agent Relay accepted the task. ${task.agent === "grok" ? "Grok Build Worker is starting in workspace sandbox." : `Codex Worker is starting in ${CODEX_SANDBOX_MODE} sandbox.`}`,
     });
 
     const executionContext = execution.start();
@@ -1710,7 +1749,7 @@ async function runTaskLifecycle({
 
 
     const result =
-      await executeCodexTask({
+      await executeSelectedAgentTask({
         task,
         route,
       });

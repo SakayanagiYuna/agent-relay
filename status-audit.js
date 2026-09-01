@@ -16,6 +16,7 @@ function inferTestResult(summary) {
 
 function buildStatusText({ status, task, route, workerId, summary, duration, gitAudit, testResult, evidenceReference, usage }) {
   const lines = ["CODEX_STATUS", "schema_version: 1", `task_id: ${task.task_id}`, `status: ${status}`, `worker: ${workerId}`, `workspace: ${route.workspace_id}`, `repo: ${route.repo_id}`];
+  if (task.agent && task.agent !== "codex") lines.push(`agent: ${task.agent}`);
   if (!TERMINAL_STATUSES.has(status)) return lines.concat(summary ? ["summary: |", ...indentBlock(summary)] : []).join("\n");
   lines.push(`duration: ${duration || "unavailable"}`);
   lines.push(`git_commit: ${gitAudit?.commit || "unavailable"}`);
