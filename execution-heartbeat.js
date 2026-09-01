@@ -1,4 +1,5 @@
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const { assertExecutionTransition, isTerminalExecutionStatus } = require("./execution-state");
 
 function formatElapsed(elapsedMs) {
   const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
@@ -32,6 +33,7 @@ function createExecutionHeartbeat({ taskId, workerId, intervalMs = DEFAULT_HEART
 
   function start() {
     if (context) throw new Error("execution_heartbeat_already_started");
+    assertExecutionTransition("START", "RUNNING");
     const startedAt = timestamp();
     context = { task_id: taskId, worker_id: workerId, started_at: startedAt, current_status: "RUNNING", last_heartbeat_at: startedAt };
     timer = setIntervalFn(() => { void heartbeat(); }, intervalMs);
@@ -40,9 +42,11 @@ function createExecutionHeartbeat({ taskId, workerId, intervalMs = DEFAULT_HEART
   }
 
   function stop(status) {
+    if (!isTerminalExecutionStatus(status)) throw new Error("execution_terminal_status_invalid");
     if (timer) clearIntervalFn(timer);
     timer = null;
     if (!context) return { context: null, elapsed_ms: 0 };
+    assertExecutionTransition(context.current_status, status);
     context.current_status = status;
     return { context: { ...context }, elapsed_ms: elapsedMs() };
   }
@@ -50,8 +54,16 @@ function createExecutionHeartbeat({ taskId, workerId, intervalMs = DEFAULT_HEART
   return { start, heartbeat, stop, getContext: () => context ? { ...context } : null, isRunning: () => Boolean(timer) };
 }
 
-function buildHeartbeatText({ taskId, workerId, elapsedMs }) {
-  return ["Agent Relay heartbeat", "", "Task:", taskId, "", "Worker:", workerId, "", "Status:", "RUNNING", "", "Elapsed:", formatElapsed(elapsedMs)].join("\n");
+function buildHeartbeatLog({ taskId, workerId, elapsedMs }) {
+  return ["[HEARTBEAT]", `task_id=${taskId}`, `worker=${workerId}`, `elapsed=${formatElapsed(elapsedMs)}`].join("\n");
+}
+
+function createDebugHeartbeatLogger({ enabled, write = console.log }) {
+  return ({ taskId, workerId, elapsedMs }) => {
+    if (!enabled) return false;
+    write(buildHeartbeatLog({ taskId, workerId, elapsedMs }));
+    return true;
+  };
 }
 
 function buildCompletionSummary({ status, taskId, workerId, elapsedMs }) {
@@ -59,4 +71,4 @@ function buildCompletionSummary({ status, taskId, workerId, elapsedMs }) {
   return [heading, "", "Task:", taskId, "", "Worker:", workerId, "", "Duration:", formatElapsed(elapsedMs)].join("\n");
 }
 
-module.exports = { DEFAULT_HEARTBEAT_INTERVAL_MS, buildCompletionSummary, buildHeartbeatText, createExecutionHeartbeat, formatElapsed };
+module.exports = { DEFAULT_HEARTBEAT_INTERVAL_MS, buildCompletionSummary, buildHeartbeatLog, createDebugHeartbeatLogger, createExecutionHeartbeat, formatElapsed };

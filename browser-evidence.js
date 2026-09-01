@@ -131,6 +131,14 @@ function resolveBrowserExecutablePath(configuredPath) {
   return resolvedPath;
 }
 
+async function openEvidenceBrowser({ playwright, config, deadline }) {
+  const executablePath = resolveBrowserExecutablePath(config.executablePath);
+  const launchOptions = { headless: true, timeout: remainingTimeoutMs(deadline) };
+  if (executablePath) launchOptions.executablePath = executablePath;
+  const browser = await withinDeadline(() => playwright.chromium.launch(launchOptions), deadline);
+  return { browser, browserExecutableConfigured: Boolean(executablePath) };
+}
+
 function remainingTimeoutMs(deadline) {
   const remaining = deadline - Date.now();
   if (remaining <= 0) {
@@ -163,13 +171,8 @@ async function captureBrowserEvidence({ taskId, route, request, config }) {
   );
   const consoleErrors = [];
   const playwright = loadPlaywright();
-  const executablePath = resolveBrowserExecutablePath(config.executablePath);
-  const launchOptions = { headless: true, timeout: remainingTimeoutMs(deadline) };
-  if (executablePath) {
-    launchOptions.executablePath = executablePath;
-  }
-
-  const browser = await playwright.chromium.launch(launchOptions);
+  const opened = await openEvidenceBrowser({ playwright, config, deadline });
+  const { browser } = opened;
   try {
     const context = await withinDeadline(() => browser.newContext({ viewport }), deadline);
     await withinDeadline(() => context.route("**/*", async (routeRequest) => {
@@ -220,7 +223,8 @@ async function captureBrowserEvidence({ taskId, route, request, config }) {
     filename: path.basename(screenshotPath),
     url: verified.url,
     viewport: { name: verified.viewport, ...viewport },
-    browserExecutableConfigured: Boolean(executablePath),
+    browserRuntime: "isolated_headless",
+    browserExecutableConfigured: Boolean(opened.browserExecutableConfigured),
     consoleErrorCount: consoleErrors.length,
     consoleErrors,
   };
@@ -241,5 +245,6 @@ module.exports = {
   remainingTimeoutMs,
   withinDeadline,
   resolveBrowserExecutablePath,
+  openEvidenceBrowser,
   validateBrowserRequest,
 };

@@ -1,5 +1,22 @@
 const assert = require("assert");
-const { buildCompletionSummary, buildHeartbeatText, createExecutionHeartbeat, formatElapsed } = require("./execution-heartbeat");
+const fs = require("fs");
+const { buildCompletionSummary, buildHeartbeatLog, createDebugHeartbeatLogger, createExecutionHeartbeat, formatElapsed } = require("./execution-heartbeat");
+const { EXECUTION_STATUSES, TERMINAL_EXECUTION_STATUSES, assertExecutionTransition, isTerminalExecutionStatus } = require("./execution-state");
+
+assert.deepStrictEqual(EXECUTION_STATUSES, ["START", "RUNNING", "DONE", "FAILED", "BLOCKED"]);
+assert.deepStrictEqual(TERMINAL_EXECUTION_STATUSES, ["DONE", "FAILED", "BLOCKED"]);
+assert.strictEqual(assertExecutionTransition("START", "RUNNING"), "RUNNING");
+for (const terminalStatus of TERMINAL_EXECUTION_STATUSES) {
+  assert.strictEqual(assertExecutionTransition("RUNNING", terminalStatus), terminalStatus, `${terminalStatus} must be a terminal execution state`);
+  assert.strictEqual(isTerminalExecutionStatus(terminalStatus), true);
+}
+assert.throws(() => assertExecutionTransition("START", "DONE"), /transition_invalid/);
+assert.throws(() => assertExecutionTransition("DONE", "RUNNING"), /transition_invalid/);
+
+const listenerSource = fs.readFileSync(require.resolve("./listener"), "utf8");
+assert.doesNotMatch(listenerSource, /function sendHeartbeat\(/, "recurring heartbeat must not have a Slack sender");
+assert.match(listenerSource, /const logHeartbeat = createDebugHeartbeatLogger\(\{[\s\S]*enabled: DEBUG_CODEX_JSON/, "heartbeat logging must use the existing debug log level");
+assert.match(listenerSource, /onHeartbeat: \(current\) => logHeartbeat\(\{ taskId: task\.task_id, workerId: current\.worker_id, elapsedMs: current\.elapsed_ms \}\)/, "recurring heartbeat must stay local");
 
 let nowMs = Date.parse("2026-09-01T00:00:00.000Z");
 let scheduled;
@@ -24,6 +41,16 @@ nowMs += 32_000;
   assert.strictEqual(heartbeats.length, 1);
   assert.strictEqual(heartbeats[0].last_heartbeat_at, "2026-09-01T00:00:32.000Z");
   assert.strictEqual(heartbeats[0].elapsed_ms, 32_000);
+  const debugLogs = [];
+  const debugHeartbeat = createDebugHeartbeatLogger({ enabled: true, write: (message) => debugLogs.push(message) });
+  assert.strictEqual(debugHeartbeat({ taskId: "TASK-057", workerId: "dev-pc-b", elapsedMs: 210_000 }), true);
+  assert.deepStrictEqual(debugLogs, ["[HEARTBEAT]\ntask_id=TASK-057\nworker=dev-pc-b\nelapsed=03m30s"], "debug logging must capture heartbeat output");
+
+  const normalLogs = [];
+  const normalHeartbeat = createDebugHeartbeatLogger({ enabled: false, write: (message) => normalLogs.push(message) });
+  assert.strictEqual(normalHeartbeat({ taskId: "TASK-057", workerId: "dev-pc-b", elapsedMs: 210_000 }), false);
+  assert.deepStrictEqual(normalLogs, [], "normal logs must hide heartbeat output");
+
   nowMs += 28_000;
   const done = heartbeat.stop("DONE");
   assert.strictEqual(cleared, true);
@@ -37,8 +64,12 @@ nowMs += 32_000;
   failed.start();
   failed.stop("FAILED");
   assert.strictEqual(failed.isRunning(), false, "FAILED must stop heartbeats");
+  const blocked = createExecutionHeartbeat({ taskId: "TASK-056", workerId: "dev-pc-b", now: () => new Date(nowMs), setIntervalFn: () => ({ unref() {} }), clearIntervalFn: () => {} });
+  blocked.start();
+  assert.strictEqual(blocked.stop("BLOCKED").context.current_status, "BLOCKED", "BLOCKED must be retained as a terminal execution state");
+  assert.throws(() => blocked.stop("RUNNING"), /terminal_status_invalid/);
   assert.strictEqual(formatElapsed(332000), "05m32s");
-  assert.match(buildHeartbeatText({ taskId: "TASK-054", workerId: "dev-pc-b", elapsedMs: 332000 }), /Status:\nRUNNING/);
+  assert.strictEqual(buildHeartbeatLog({ taskId: "TASK-054", workerId: "dev-pc-b", elapsedMs: 332000 }), "[HEARTBEAT]\ntask_id=TASK-054\nworker=dev-pc-b\nelapsed=05m32s");
   assert.match(buildCompletionSummary({ status: "DONE", taskId: "TASK-054", workerId: "dev-pc-b", elapsedMs: 872000 }), /Duration:\n14m32s/);
-  console.log("execution heartbeat lifecycle regression passed");
+  console.log("execution state and heartbeat lifecycle regression passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

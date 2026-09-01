@@ -15,6 +15,7 @@ const MANDATORY_GUIDANCE = [
   "Do not alter Codex configuration or system security settings.",
   "If the task cannot be completed inside the sandbox, stop and explain the required permission.",
   "For write tasks, report changed files and verification; if none changed, say so.",
+  "End the final response with one standalone line: AGENT_RELAY_RESULT: DONE, FAILED, or BLOCKED. Use FAILED when requested acceptance was not completed, even if the Codex process itself can exit normally.",
 ].join("\n");
 
 const CAPABILITY_FRAGMENTS = Object.freeze({
