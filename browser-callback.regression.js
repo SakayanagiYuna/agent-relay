@@ -1,7 +1,7 @@
 "use strict";
 const assert = require("assert");
 const http = require("http");
-const { BOUND_NAVIGATION_ORIGINS, CHANNELS, EVENT_SCHEMA, attachViaPlaywrightCli, cliLaunchSpec, createCallbackServer, createCliContext, extractChatInputRef, extractSnapshotTextboxRef, extractTabs, extractUrls, isAllowedBoundNavigation, isAllowedChatGPTOrigin, npxCliEntrypoint, parseAttachArguments, renderAgentRelayEvent, resolveChatComposer, targetIdentity, validateAttachEndpoint, validateCallback, validateRelayCallbackUrl } = require("./browser-callback");
+const { BOUND_NAVIGATION_ORIGINS, CALLBACK_REVIEW_INSTRUCTION, CHANNELS, EVENT_SCHEMA, attachViaPlaywrightCli, cliLaunchSpec, createCallbackServer, createCliContext, extractChatInputRef, extractSnapshotTextboxRef, extractTabs, extractUrls, isAllowedBoundNavigation, isAllowedChatGPTOrigin, npxCliEntrypoint, parseAttachArguments, renderAgentRelayEvent, resolveChatComposer, targetIdentity, validateAttachEndpoint, validateCallback, validateRelayCallbackUrl } = require("./browser-callback");
 
 assert.deepStrictEqual(CHANNELS, ["msedge", "chrome"]);
 assert.strictEqual(isAllowedChatGPTOrigin("https://chatgpt.com/c/abc"), true);
@@ -24,15 +24,16 @@ assert.strictEqual(extractChatInputRef('- textbox "与 ChatGPT 聊天" [ref=e121
 assert.throws(() => extractChatInputRef('- textbox "搜索" [ref=e1217]'), /composer_not_found/);
 assert.strictEqual(extractSnapshotTextboxRef('- textbox "Message ChatGPT" [ref=e1217]'), "e1217");
 const rendered = renderAgentRelayEvent({ task_id: "TASK-045", status: "DONE" });
-assert.strictEqual(rendered, '{"schema_version":1,"event":"task_terminal","action":"REVIEW","task_id":"TASK-045","status":"DONE"}');
-assert.deepStrictEqual(JSON.parse(rendered), { ...EVENT_SCHEMA, task_id: "TASK-045", status: "DONE" });
+assert.strictEqual(rendered, '{"schema_version":1,"event":"task_terminal","action":"REVIEW","task_id":"TASK-045","status":"DONE"}\n\n请使用 Slack 读取此 task_id 对应的终态 CODEX_STATUS 消息，获取完整执行信息（包括 token_usage）；本事件仅用于提醒。');
+assert.deepStrictEqual(JSON.parse(rendered.split("\n\n")[0]), { ...EVENT_SCHEMA, task_id: "TASK-045", status: "DONE" });
+assert.strictEqual(rendered.split("\n\n")[1], CALLBACK_REVIEW_INSTRUCTION);
 assert.deepStrictEqual(
-  JSON.parse(renderAgentRelayEvent({ task_id: "TASK-085", status: "DONE", slack_channel_id: "C123ABC", slack_status_ts: "1720000000.000100", evidence_file_id: "F085ABC", evidence_permalink: "https://workspace.slack.com/files/U1/F085ABC/evidence.png" })),
+  JSON.parse(renderAgentRelayEvent({ task_id: "TASK-085", status: "DONE", slack_channel_id: "C123ABC", slack_status_ts: "1720000000.000100", evidence_file_id: "F085ABC", evidence_permalink: "https://workspace.slack.com/files/U1/F085ABC/evidence.png" }).split("\n\n")[0]),
   { ...EVENT_SCHEMA, task_id: "TASK-085", status: "DONE", slack_channel_id: "C123ABC", slack_status_ts: "1720000000.000100", evidence_file_id: "F085ABC", evidence_permalink: "https://workspace.slack.com/files/U1/F085ABC/evidence.png" },
   "callback must preserve validated Slack evidence retrieval metadata"
 );
 assert.deepStrictEqual(
-  JSON.parse(renderAgentRelayEvent({ task_id: "TASK-045", status: "FAILED", summary: "do not copy", stderr: "private diagnostic", result: { changed_files: ["listener.js"] }, duration: "01m00s" })),
+  JSON.parse(renderAgentRelayEvent({ task_id: "TASK-045", status: "FAILED", summary: "do not copy", stderr: "private diagnostic", result: { changed_files: ["listener.js"] }, duration: "01m00s" }).split("\n\n")[0]),
   { ...EVENT_SCHEMA, task_id: "TASK-045", status: "FAILED" },
   "callback event must remain a wake-up signal and never copy execution details"
 );
@@ -73,9 +74,9 @@ function request(relay, method, route, body) { return new Promise((resolve, reje
     result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.body.error, "send_guard_blocked");
     result = await request(relay, "POST", "/api/arm"); assert.strictEqual(result.status, 200);
     result = await request(relay, "POST", "/api/callback", { task_id: "TASK-045", status: "DONE", callback_target_id: "target-missing" }); assert.strictEqual(result.body.error, "callback_target_not_armed");
-    result = await request(relay, "POST", "/api/callback", { task_id: "TASK-045", status: "DONE", callback_target_id: callbackTargetId }); assert.strictEqual(result.status, 200); assert.deepStrictEqual(calls, [["fill", '{"schema_version":1,"event":"task_terminal","action":"REVIEW","task_id":"TASK-045","status":"DONE"}'], ["press", "Enter"]]); calls.length = 0;
+    result = await request(relay, "POST", "/api/callback", { task_id: "TASK-045", status: "DONE", callback_target_id: callbackTargetId }); assert.strictEqual(result.status, 200); assert.deepStrictEqual(calls, [["fill", renderAgentRelayEvent({ task_id: "TASK-045", status: "DONE" })], ["press", "Enter"]]); calls.length = 0;
     result = await request(relay, "POST", "/api/mock-callback", { task_id: "TASK-045", status: "BLOCKED" }); assert.match(result.body.event, /"status":"BLOCKED"/);
-    result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.status, 200); assert.deepStrictEqual(calls, [["fill", result.body.error ? "" : '{"schema_version":1,"event":"task_terminal","action":"REVIEW","task_id":"TASK-045","status":"BLOCKED"}'], ["press", "Enter"]]);
+    result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.status, 200); assert.deepStrictEqual(calls, [["fill", result.body.error ? "" : renderAgentRelayEvent({ task_id: "TASK-045", status: "BLOCKED" })], ["press", "Enter"]]);
     currentUrl = "https://chatgpt.com/c/other"; navigationHandler(); result = await request(relay, "GET", "/api/state"); assert.strictEqual(result.body.armed, false); result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.body.error, "send_guard_blocked");
     currentUrl = "https://www.bilibili.com/video/2"; navigationHandler(); result = await request(relay, "GET", "/api/state"); assert.strictEqual(result.body.armed, false);
   } finally { await relay.close(); }

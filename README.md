@@ -7,6 +7,8 @@ Agent Relay 是本地、按 allowlist 控制的 Slack-to-Codex 执行中继。�
 本版本相对 V5.6 的完整变更如下：
 
 - `CODEX_TASK` 协议仍固定为 schema version `1` 和既有必填字段；parser 为拒绝路径补充可审计的 `task_id` 提取、解析阶段、已识别字段和明确 reason，拒绝工单不会进入执行，编号可被审计追踪。
+- 在配置频道发送精确文本 `AGENT_RELAY_HEALTH` 可探活所有收到该消息的 Relay 实例。探活不校验发件人、不会进入任务队列；每台实例立即回复自己的 `worker`、`running_tasks` 和 `queued_tasks`。
+- 每个终态任务会将 Codex JSONL 中实际返回的 token usage 写入本机 `state/usage-accounting.json`，并在 `CODEX_STATUS` 中以紧凑 `token_usage` 字段报告；CLI 未返回 usage 时明确报告 `unavailable`，不估算费用。
 - 执行状态统一为 `START -> RUNNING -> DONE | FAILED | BLOCKED`。30 秒 heartbeat 改为仅在 `AGENT_RELAY_LOG_LEVEL=debug` 的本地观测信号，不再向 Slack 产生周期 `RUNNING` 消息，也不会触发 callback。
 - 终态 `CODEX_STATUS` 新增 duration、Git commit、changed files、diff 汇总及可推断的 test result；成功摘要使用 `summary`，失败/阻塞摘要使用 `reason`，不会复制完整 stdout、stderr 或 diff。
 - 终态以单个 `task_terminal` event 独立 fan-out 到 Browser Callback 和 Human Notification；任一分支失败只写本机 diagnostic，不改变 Slack 生命周期或阻塞另一分支。

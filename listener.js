@@ -18,6 +18,8 @@ const { deliverTerminalCallback } = require("./callback-lifecycle");
 const { createHumanNotificationProvider, createSmtpTransport, readHumanNotificationConfig } = require("./human-notification");
 const { fanoutTerminalEvent } = require("./terminal-fanout");
 const { formatElapsed, createDebugHeartbeatLogger, createExecutionHeartbeat } = require("./execution-heartbeat");
+const { HEALTH_COMMAND, buildHealthStatusText } = require("./health-command");
+const { createUsageCollector, recordUsage } = require("./usage-accounting");
 const { buildStatusText } = require("./status-audit");
 const { resolveWorkerOutcome } = require("./worker-outcome");
 const { extractSlackEvidenceReference } = require("./slack-evidence-reference");
@@ -427,6 +429,7 @@ const seenTasks = loadSeenTasks();
 
 let taskQueueTail = Promise.resolve();
 let queuedTaskCount = 0;
+let runningTaskCount = 0;
 
 function enqueueTask(taskId, fn) {
   queuedTaskCount += 1;
@@ -443,7 +446,12 @@ function enqueueTask(taskId, fn) {
         `[DEQUEUE] task_id=${taskId} remaining=${queuedTaskCount}`
       );
 
-      return fn();
+      runningTaskCount += 1;
+      try {
+        return await fn();
+      } finally {
+        runningTaskCount -= 1;
+      }
     },
     async () => {
       queuedTaskCount -= 1;
@@ -452,7 +460,12 @@ function enqueueTask(taskId, fn) {
         `[DEQUEUE] task_id=${taskId} remaining=${queuedTaskCount}`
       );
 
-      return fn();
+      runningTaskCount += 1;
+      try {
+        return await fn();
+      } finally {
+        runningTaskCount -= 1;
+      }
     }
   );
 
@@ -640,6 +653,7 @@ async function sendStatus({
   summary,
   duration,
   gitAudit,
+  usage,
   evidenceReference,
 }) {
   const text =
@@ -651,6 +665,7 @@ async function sendStatus({
       summary: clampText(summary, MAX_SLACK_SUMMARY_CHARS),
       duration,
       gitAudit,
+      usage,
       evidenceReference,
     });
 
@@ -1317,6 +1332,8 @@ async function executeCodexTask({
 
       let stdoutBuffer = "";
 
+      const usageCollector = createUsageCollector();
+
       const agentMessages = [];
 
       const diagnostics = [];
@@ -1390,6 +1407,7 @@ async function executeCodexTask({
             }
 
             printCodexProgress(task.task_id, event);
+            usageCollector.observe(event);
 
             if (DEBUG_CODEX_JSON) {
               debugCodexEvent(event);
@@ -1484,6 +1502,7 @@ async function executeCodexTask({
 
             if (event) {
               printCodexProgress(task.task_id, event);
+              usageCollector.observe(event);
 
               if (DEBUG_CODEX_JSON) {
                 debugCodexEvent(event);
@@ -1525,6 +1544,7 @@ async function executeCodexTask({
 
               summary:
                 `Codex Worker exceeded the configured timeout of ${CODEX_TIMEOUT_MS} ms and was terminated.`,
+              usage: usageCollector.usage(),
             });
 
             return;
@@ -1552,7 +1572,7 @@ async function executeCodexTask({
 
             const reportedStatus = resolveWorkerOutcome({ exitCode: code, summary });
             if (reportedStatus !== "DONE") console.error(`[WORKER] task_id=${task.task_id} exit_code=0 overridden_by_reported_status=${reportedStatus}`);
-            resolve({ status: reportedStatus, summary });
+            resolve({ status: reportedStatus, summary, usage: usageCollector.usage() });
 
             return;
           }
@@ -1593,6 +1613,7 @@ async function executeCodexTask({
               summary:
                 cleanedDiagnostic ||
                 `Codex could not continue because the requested operation is outside the ${CODEX_SANDBOX_MODE} sandbox.`,
+              usage: usageCollector.usage(),
             });
 
             return;
@@ -1607,13 +1628,14 @@ async function executeCodexTask({
             status:
               "FAILED",
 
-            summary:
-              cleanedDiagnostic ||
-              `Codex exited with code ${code}${
+              summary:
+                cleanedDiagnostic ||
+                `Codex exited with code ${code}${
                 signal
                   ? ` and signal ${signal}`
                   : ""
               }.`,
+              usage: usageCollector.usage(),
           });
         }
       );
@@ -1708,6 +1730,7 @@ async function runTaskLifecycle({
 
     const terminalExecution = execution.stop(result.status);
     const gitAudit = collectGitAudit(route.local_path);
+    recordUsage({ stateDir: STATE_DIR, taskId: task.task_id, workerId: WORKER_ID, status: result.status, usage: result.usage });
 
 
     const terminalReceipt = await sendStatus({
@@ -1722,6 +1745,7 @@ async function runTaskLifecycle({
         result.summary,
       duration: formatElapsed(terminalExecution.elapsed_ms),
       gitAudit,
+      usage: result.usage,
       evidenceReference: result.evidenceReference,
     });
 
@@ -1743,6 +1767,7 @@ async function runTaskLifecycle({
     );
   } catch (error) {
     const terminalExecution = execution.stop("FAILED");
+    recordUsage({ stateDir: STATE_DIR, taskId: task.task_id, workerId: WORKER_ID, status: "FAILED", usage: null });
     console.error("");
 
     console.error(
@@ -1767,6 +1792,7 @@ async function runTaskLifecycle({
       summary: `Agent Relay Worker internal failure: ${error.message}`,
       duration: formatElapsed(terminalExecution.elapsed_ms),
       gitAudit: collectGitAudit(route.local_path),
+      usage: null,
       });
 
       await fanoutTerminalNotifications({
@@ -1802,15 +1828,33 @@ app.event(
     const message = event;
 
     try {
-      // Ignore Agent Relay's own status posts.
-      if (message.bot_id) {
-        return;
-      }
-
       if (
         !message.text ||
         !message.channel
       ) {
+        return;
+      }
+
+      const normalizedText = normalizeSlackText(message.text);
+
+      // Health probes are intentionally accepted from any Slack sender in the
+      // configured channel. They do not enter the task parser or queue.
+      if (message.channel === CHANNEL_ID && normalizedText === HEALTH_COMMAND) {
+        await app.client.chat.postMessage({
+          channel: message.channel,
+          text: buildHealthStatusText({
+            workerId: WORKER_ID,
+            runningTasks: runningTaskCount,
+            queuedTasks: queuedTaskCount,
+          }),
+        });
+        console.log(`[HEALTH] worker=${WORKER_ID} running_tasks=${runningTaskCount} queued_tasks=${queuedTaskCount}`);
+        return;
+      }
+
+      // Ignore Agent Relay's own status posts after accepting probes sent by
+      // other Slack apps or bots.
+      if (message.bot_id) {
         return;
       }
 
@@ -1832,11 +1876,6 @@ app.event(
       // ------------------------------------------------------
       // Only CODEX_TASK enters parser
       // ------------------------------------------------------
-
-      const normalizedText =
-        normalizeSlackText(
-          message.text
-        );
 
       if (
         !normalizedText.startsWith(

@@ -14,7 +14,7 @@ function inferTestResult(summary) {
   return "executed; outcome not reported by worker";
 }
 
-function buildStatusText({ status, task, route, workerId, summary, duration, gitAudit, testResult, evidenceReference }) {
+function buildStatusText({ status, task, route, workerId, summary, duration, gitAudit, testResult, evidenceReference, usage }) {
   const lines = ["CODEX_STATUS", "schema_version: 1", `task_id: ${task.task_id}`, `status: ${status}`, `worker: ${workerId}`, `workspace: ${route.workspace_id}`, `repo: ${route.repo_id}`];
   if (!TERMINAL_STATUSES.has(status)) return lines.concat(summary ? ["summary: |", ...indentBlock(summary)] : []).join("\n");
   lines.push(`duration: ${duration || "unavailable"}`);
@@ -25,6 +25,8 @@ function buildStatusText({ status, task, route, workerId, summary, duration, git
     lines.push("changed_files: unavailable");
   }
   lines.push(`git_diff_summary: ${gitAudit?.summary || "unavailable"}`);
+  if (usage) lines.push(`token_usage: input=${usage.input_tokens ?? "unavailable"} cached_input=${usage.cached_input_tokens ?? "unavailable"} output=${usage.output_tokens ?? "unavailable"} reasoning=${usage.reasoning_tokens ?? "unavailable"} total=${usage.total_tokens ?? "unavailable"}`);
+  else lines.push("token_usage: unavailable");
   const resolvedTestResult = testResult || inferTestResult(summary);
   if (resolvedTestResult) lines.push(`test_result: ${resolvedTestResult}`);
   if (evidenceReference?.fileId) lines.push(`evidence_file_id: ${evidenceReference.fileId}`);
