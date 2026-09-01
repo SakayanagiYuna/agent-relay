@@ -1,5 +1,6 @@
 const { App } = require("@slack/bolt");
 const fs = require("fs");
+const http = require("http");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const {
@@ -9,9 +10,19 @@ const {
   redactText: redactBrowserText,
   resolveBrowserExecutablePath,
 } = require("./browser-evidence");
-const { normalizeSlackText, parseCodexTask } = require("./task-parser");
+const { validateRelayCallbackUrl } = require("./browser-callback");
+const { extractCodexTaskId, normalizeSlackText, parseCodexTask } = require("./task-parser");
 const { buildContext } = require("./context-builder");
 const { resolveCodexExecutable } = require("./codex-discovery");
+const { deliverTerminalCallback } = require("./callback-lifecycle");
+const { createHumanNotificationProvider, createSmtpTransport, readHumanNotificationConfig } = require("./human-notification");
+const { fanoutTerminalEvent } = require("./terminal-fanout");
+const { formatElapsed, createDebugHeartbeatLogger, createExecutionHeartbeat } = require("./execution-heartbeat");
+const { HEALTH_COMMAND, buildHealthStatusText } = require("./health-command");
+const { createUsageCollector, recordUsage } = require("./usage-accounting");
+const { buildStatusText } = require("./status-audit");
+const { resolveWorkerOutcome } = require("./worker-outcome");
+const { extractSlackEvidenceReference } = require("./slack-evidence-reference");
 
 // ============================================================
 // Agent Relay V5.5
@@ -192,6 +203,29 @@ const BROWSER_ALLOWED_ORIGINS = String(process.env.AGENT_RELAY_BROWSER_ALLOWED_O
 const BROWSER_EXECUTABLE_PATH = process.env.AGENT_RELAY_BROWSER_EXECUTABLE_PATH
   ? resolveBrowserExecutablePath(requireLocalPath("AGENT_RELAY_BROWSER_EXECUTABLE_PATH"))
   : "";
+const BROWSER_CALLBACK_URL = process.env.AGENT_RELAY_BROWSER_CALLBACK_URL
+  ? validateRelayCallbackUrl(process.env.AGENT_RELAY_BROWSER_CALLBACK_URL)
+  : "";
+const BROWSER_CALLBACK_TARGET_ID = String(process.env.AGENT_RELAY_BROWSER_CALLBACK_TARGET_ID || "");
+const HUMAN_NOTIFICATION_CONFIG = readHumanNotificationConfig();
+const HUMAN_NOTIFICATION_PROVIDER = createHumanNotificationProvider({
+  config: HUMAN_NOTIFICATION_CONFIG,
+  transport: createSmtpTransport({ config: HUMAN_NOTIFICATION_CONFIG }),
+});
+
+function readRuntimeBrowserCallbackConfig() {
+  const envFile = path.join(__dirname, ".env");
+  const values = {};
+  if (fs.existsSync(envFile)) {
+    for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
+      const match = line.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (match) values[match[1]] = match[2].trim().replace(/^(?:"(.*)"|'(.*)')$/, "$1$2");
+    }
+  }
+  const endpoint = values.AGENT_RELAY_BROWSER_CALLBACK_URL || BROWSER_CALLBACK_URL;
+  const callbackTargetId = values.AGENT_RELAY_BROWSER_CALLBACK_TARGET_ID || BROWSER_CALLBACK_TARGET_ID;
+  return { endpoint: endpoint ? validateRelayCallbackUrl(endpoint) : "", callbackTargetId };
+}
 
 if (BROWSER_EVIDENCE_ENABLED) {
   if (BROWSER_ALLOWED_ORIGINS.length === 0) throw new Error("Missing required configuration: AGENT_RELAY_BROWSER_ALLOWED_ORIGINS");
@@ -395,6 +429,7 @@ const seenTasks = loadSeenTasks();
 
 let taskQueueTail = Promise.resolve();
 let queuedTaskCount = 0;
+let runningTaskCount = 0;
 
 function enqueueTask(taskId, fn) {
   queuedTaskCount += 1;
@@ -411,7 +446,12 @@ function enqueueTask(taskId, fn) {
         `[DEQUEUE] task_id=${taskId} remaining=${queuedTaskCount}`
       );
 
-      return fn();
+      runningTaskCount += 1;
+      try {
+        return await fn();
+      } finally {
+        runningTaskCount -= 1;
+      }
     },
     async () => {
       queuedTaskCount -= 1;
@@ -420,7 +460,12 @@ function enqueueTask(taskId, fn) {
         `[DEQUEUE] task_id=${taskId} remaining=${queuedTaskCount}`
       );
 
-      return fn();
+      runningTaskCount += 1;
+      try {
+        return await fn();
+      } finally {
+        runningTaskCount -= 1;
+      }
     }
   );
 
@@ -574,45 +619,30 @@ function resolveRoute(
 // Slack CODEX_STATUS
 // ------------------------------------------------------------
 
-function buildStatusText({
-  status,
-  task,
-  route,
-  summary,
-}) {
-  const lines = [
-    "CODEX_STATUS",
-    "schema_version: 1",
-    `task_id: ${task.task_id}`,
-    `status: ${status}`,
-    `worker: ${WORKER_ID}`,
-    `workspace: ${route.workspace_id}`,
-    `repo: ${route.repo_id}`,
-  ];
-
-  if (summary) {
-    lines.push(
-      "summary: |"
-    );
-
-    const safeSummary =
-      clampText(
-        summary,
-        MAX_SLACK_SUMMARY_CHARS
-      );
-
-    for (
-      const line of safeSummary.split(
-        /\r?\n/
-      )
-    ) {
-      lines.push(
-        `  ${line}`
-      );
+function collectGitAudit(repoPath) {
+  const run = (args) => spawnSync("git", args, { cwd: repoPath, encoding: "utf8", windowsHide: true, timeout: 5_000 });
+  const head = run(["rev-parse", "--short", "HEAD"]);
+  if (head.error || head.status !== 0) return { commit: "unavailable", summary: "unavailable", changedFiles: null };
+  const changed = new Set();
+  let insertions = 0;
+  let deletions = 0;
+  const numstat = run(["diff", "--numstat", "HEAD"]);
+  if (!numstat.error && numstat.status === 0) {
+    for (const line of String(numstat.stdout || "").trim().split(/\r?\n/)) {
+      const [added, removed, file] = line.split("\t");
+      if (!file) continue;
+      changed.add(file);
+      insertions += Number(added) || 0;
+      deletions += Number(removed) || 0;
     }
   }
-
-  return lines.join("\n");
+  const untracked = run(["ls-files", "--others", "--exclude-standard"]);
+  if (!untracked.error && untracked.status === 0) for (const file of String(untracked.stdout || "").trim().split(/\r?\n/)) if (file) changed.add(file);
+  return {
+    commit: String(head.stdout || "").trim() || "unavailable",
+    changedFiles: Array.from(changed).sort(),
+    summary: `${changed.size} changed file(s), +${insertions}/-${deletions}`,
+  };
 }
 
 async function sendStatus({
@@ -621,13 +651,22 @@ async function sendStatus({
   task,
   route,
   summary,
+  duration,
+  gitAudit,
+  usage,
+  evidenceReference,
 }) {
   const text =
     buildStatusText({
       status,
       task,
       route,
-      summary,
+      workerId: WORKER_ID,
+      summary: clampText(summary, MAX_SLACK_SUMMARY_CHARS),
+      duration,
+      gitAudit,
+      usage,
+      evidenceReference,
     });
 
   const result =
@@ -647,6 +686,61 @@ async function sendStatus({
   return result;
 }
 
+const logHeartbeat = createDebugHeartbeatLogger({
+  enabled: DEBUG_CODEX_JSON,
+  write: console.log,
+});
+
+function postBrowserCallback({ payload, endpoint = BROWSER_CALLBACK_URL, requestFn = http.request }) {
+  if (!endpoint) return Promise.resolve({ skipped: true });
+  const target = new URL(endpoint);
+  const body = JSON.stringify(payload);
+  return new Promise((resolve, reject) => {
+    const request = requestFn({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || 80,
+      path: target.pathname,
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+      timeout: 5000,
+    }, (response) => {
+      response.resume();
+      response.on("end", () => {
+        if (response.statusCode >= 200 && response.statusCode < 300) resolve({ delivered: true });
+        else reject(new Error(`browser_callback_http_${response.statusCode}`));
+      });
+    });
+    request.once("timeout", () => request.destroy(new Error("browser_callback_timeout")));
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
+async function fanoutTerminalNotifications({ task, status, elapsedMs, slackReceipt, evidenceReference }) {
+  const browserCallback = readRuntimeBrowserCallbackConfig();
+  const callbackReady = browserCallback.endpoint && slackReceipt?.ts;
+  if (browserCallback.endpoint && !slackReceipt?.ts) console.error(`[BROWSER_CALLBACK_FAILED] task_id=${task.task_id} status=${status} provider=browser: slack_terminal_receipt_unavailable`);
+  const result = await fanoutTerminalEvent({
+    taskId: task.task_id,
+    status,
+    elapsedSec: Math.floor(elapsedMs / 1000),
+    deliverBrowser: callbackReady ? (event) => deliverTerminalCallback({
+      taskId: event.task_id,
+      status: event.status,
+      callbackTargetId: browserCallback.callbackTargetId,
+      slackStatusTs: slackReceipt?.ts,
+      slackChannelId: slackReceipt?.channel || CHANNEL_ID,
+      evidenceReference,
+      deliver: (payload) => postBrowserCallback({ payload, endpoint: browserCallback.endpoint }),
+    }) : undefined,
+    notifyHuman: (event) => HUMAN_NOTIFICATION_PROVIDER.notify(event),
+    diagnostic: (code, error, event) => console.error(`[${code}] task_id=${event.task_id} status=${event.status} provider=${code === "HUMAN_NOTIFY_FAILED" ? HUMAN_NOTIFICATION_PROVIDER.name : "browser"}: ${error.message}`),
+  });
+  if (result.browser.status === "fulfilled" && !result.browser.value.skipped) console.log(`[CALLBACK] task_id=${task.task_id} status=${status} delivered`);
+  if (result.human.status === "fulfilled" && result.human.value.delivered) console.log(`[HUMAN_NOTIFY] task_id=${task.task_id} status=${status} provider=${HUMAN_NOTIFICATION_PROVIDER.name} delivered`);
+}
+
 async function uploadBrowserEvidence({ channelId, task, evidence }) {
   const metadata = [
     "Agent Relay browser evidence artifact",
@@ -663,9 +757,18 @@ async function uploadBrowserEvidence({ channelId, task, evidence }) {
     title: `Browser evidence ${task.task_id} ${evidence.viewport.name}`,
     initial_comment: metadata,
   });
-  const fileId = result?.files?.[0]?.id || result?.file?.id || "unavailable";
-  console.log(`[EVIDENCE] task_id=${task.task_id} uploaded filename=${evidence.filename} file_id=${fileId}`);
-  return fileId;
+  let reference = extractSlackEvidenceReference(result);
+  if (!reference) throw new Error("slack_evidence_file_reference_unavailable");
+  if (!reference.permalink && typeof app.client.files?.info === "function") {
+    try {
+      const details = await app.client.files.info({ file: reference.fileId });
+      reference = { ...reference, ...extractSlackEvidenceReference(details) };
+    } catch (error) {
+      console.warn(`[EVIDENCE] task_id=${task.task_id} file_id=${reference.fileId} details unavailable: ${error.message}`);
+    }
+  }
+  console.log(`[EVIDENCE] task_id=${task.task_id} uploaded filename=${evidence.filename} file_id=${reference.fileId}`);
+  return reference;
 }
 
 async function runBrowserEvidence({ channelId, task, route }) {
@@ -687,11 +790,11 @@ async function runBrowserEvidence({ channelId, task, route }) {
       timeoutMs: BROWSER_EVIDENCE_TIMEOUT_MS,
     },
   });
-  const fileId = await uploadBrowserEvidence({ channelId, task, evidence });
+  const reference = await uploadBrowserEvidence({ channelId, task, evidence });
   const errors = evidence.consoleErrors.length
     ? ` Console errors (bounded): ${evidence.consoleErrors.join(" | ")}`
     : "";
-  return `Browser evidence uploaded: ${evidence.filename} (file_id: ${fileId}; ${evidence.viewport.name} ${evidence.viewport.width}x${evidence.viewport.height}; ${evidence.url}; console errors: ${evidence.consoleErrorCount}).${errors}`;
+  return { reference, summary: `Browser evidence uploaded: ${evidence.filename} (file_id: ${reference.fileId}; ${evidence.viewport.name} ${evidence.viewport.width}x${evidence.viewport.height}; ${evidence.url}; console errors: ${evidence.consoleErrorCount}).${errors}` };
 }
 
 
@@ -1229,6 +1332,8 @@ async function executeCodexTask({
 
       let stdoutBuffer = "";
 
+      const usageCollector = createUsageCollector();
+
       const agentMessages = [];
 
       const diagnostics = [];
@@ -1302,6 +1407,7 @@ async function executeCodexTask({
             }
 
             printCodexProgress(task.task_id, event);
+            usageCollector.observe(event);
 
             if (DEBUG_CODEX_JSON) {
               debugCodexEvent(event);
@@ -1396,6 +1502,7 @@ async function executeCodexTask({
 
             if (event) {
               printCodexProgress(task.task_id, event);
+              usageCollector.observe(event);
 
               if (DEBUG_CODEX_JSON) {
                 debugCodexEvent(event);
@@ -1437,6 +1544,7 @@ async function executeCodexTask({
 
               summary:
                 `Codex Worker exceeded the configured timeout of ${CODEX_TIMEOUT_MS} ms and was terminated.`,
+              usage: usageCollector.usage(),
             });
 
             return;
@@ -1462,12 +1570,9 @@ async function executeCodexTask({
                 `Codex completed successfully in ${CODEX_SANDBOX_MODE} sandbox.`;
             }
 
-            resolve({
-              status:
-                "DONE",
-
-              summary,
-            });
+            const reportedStatus = resolveWorkerOutcome({ exitCode: code, summary });
+            if (reportedStatus !== "DONE") console.error(`[WORKER] task_id=${task.task_id} exit_code=0 overridden_by_reported_status=${reportedStatus}`);
+            resolve({ status: reportedStatus, summary, usage: usageCollector.usage() });
 
             return;
           }
@@ -1508,6 +1613,7 @@ async function executeCodexTask({
               summary:
                 cleanedDiagnostic ||
                 `Codex could not continue because the requested operation is outside the ${CODEX_SANDBOX_MODE} sandbox.`,
+              usage: usageCollector.usage(),
             });
 
             return;
@@ -1522,13 +1628,14 @@ async function executeCodexTask({
             status:
               "FAILED",
 
-            summary:
-              cleanedDiagnostic ||
-              `Codex exited with code ${code}${
+              summary:
+                cleanedDiagnostic ||
+                `Codex exited with code ${code}${
                 signal
                   ? ` and signal ${signal}`
                   : ""
               }.`,
+              usage: usageCollector.usage(),
           });
         }
       );
@@ -1577,6 +1684,13 @@ async function runTaskLifecycle({
   task,
   route,
 }) {
+  const execution = createExecutionHeartbeat({
+    taskId: task.task_id,
+    workerId: WORKER_ID,
+    onHeartbeat: (current) => logHeartbeat({ taskId: task.task_id, workerId: current.worker_id, elapsedMs: current.elapsed_ms }),
+    onError: (error) => console.error(`[HEARTBEAT] task_id=${task.task_id} status=RUNNING local log failed: ${error.message}`),
+  });
+
   try {
     await sendStatus({
       channelId,
@@ -1591,6 +1705,9 @@ async function runTaskLifecycle({
         `Agent Relay accepted the task. Codex Worker is starting in ${CODEX_SANDBOX_MODE} sandbox.`,
     });
 
+    const executionContext = execution.start();
+    console.log(`[LIFECYCLE] task_id=${executionContext.task_id} worker_id=${executionContext.worker_id} started_at=${executionContext.started_at} status=${executionContext.current_status}`);
+
 
     const result =
       await executeCodexTask({
@@ -1600,8 +1717,9 @@ async function runTaskLifecycle({
 
     if (task.browser_evidence && result.status === "DONE") {
       try {
-        const evidenceSummary = await runBrowserEvidence({ channelId, task, route });
-        result.summary = `${result.summary}\n\n${evidenceSummary}`;
+        const evidence = await runBrowserEvidence({ channelId, task, route });
+        result.summary = `${result.summary}\n\n${evidence.summary}`;
+        result.evidenceReference = evidence.reference;
       } catch (error) {
         result.status = isSlackFilesScopeError(error) ? "BLOCKED" : "FAILED";
         result.summary = isSlackFilesScopeError(error)
@@ -1610,8 +1728,12 @@ async function runTaskLifecycle({
       }
     }
 
+    const terminalExecution = execution.stop(result.status);
+    const gitAudit = collectGitAudit(route.local_path);
+    recordUsage({ stateDir: STATE_DIR, taskId: task.task_id, workerId: WORKER_ID, status: result.status, usage: result.usage });
 
-    await sendStatus({
+
+    const terminalReceipt = await sendStatus({
       channelId,
 
       status:
@@ -1619,9 +1741,20 @@ async function runTaskLifecycle({
 
       task,
       route,
-
       summary:
         result.summary,
+      duration: formatElapsed(terminalExecution.elapsed_ms),
+      gitAudit,
+      usage: result.usage,
+      evidenceReference: result.evidenceReference,
+    });
+
+    await fanoutTerminalNotifications({
+      task,
+      status: result.status,
+      elapsedMs: terminalExecution.elapsed_ms,
+      slackReceipt: terminalReceipt,
+      evidenceReference: result.evidenceReference,
     });
 
 
@@ -1633,6 +1766,8 @@ async function runTaskLifecycle({
       "==============================="
     );
   } catch (error) {
+    const terminalExecution = execution.stop("FAILED");
+    recordUsage({ stateDir: STATE_DIR, taskId: task.task_id, workerId: WORKER_ID, status: "FAILED", usage: null });
     console.error("");
 
     console.error(
@@ -1645,7 +1780,7 @@ async function runTaskLifecycle({
 
 
     try {
-      await sendStatus({
+      const terminalReceipt = await sendStatus({
         channelId,
 
         status:
@@ -1654,8 +1789,17 @@ async function runTaskLifecycle({
         task,
         route,
 
-        summary:
-          `Agent Relay Worker internal failure: ${error.message}`,
+      summary: `Agent Relay Worker internal failure: ${error.message}`,
+      duration: formatElapsed(terminalExecution.elapsed_ms),
+      gitAudit: collectGitAudit(route.local_path),
+      usage: null,
+      });
+
+      await fanoutTerminalNotifications({
+        task,
+        status: "FAILED",
+        elapsedMs: terminalExecution.elapsed_ms,
+        slackReceipt: terminalReceipt,
       });
     } catch (
       statusError
@@ -1684,15 +1828,33 @@ app.event(
     const message = event;
 
     try {
-      // Ignore Agent Relay's own status posts.
-      if (message.bot_id) {
-        return;
-      }
-
       if (
         !message.text ||
         !message.channel
       ) {
+        return;
+      }
+
+      const normalizedText = normalizeSlackText(message.text);
+
+      // Health probes are intentionally accepted from any Slack sender in the
+      // configured channel. They do not enter the task parser or queue.
+      if (message.channel === CHANNEL_ID && normalizedText === HEALTH_COMMAND) {
+        await app.client.chat.postMessage({
+          channel: message.channel,
+          text: buildHealthStatusText({
+            workerId: WORKER_ID,
+            runningTasks: runningTaskCount,
+            queuedTasks: queuedTaskCount,
+          }),
+        });
+        console.log(`[HEALTH] worker=${WORKER_ID} running_tasks=${runningTaskCount} queued_tasks=${queuedTaskCount}`);
+        return;
+      }
+
+      // Ignore Agent Relay's own status posts after accepting probes sent by
+      // other Slack apps or bots.
+      if (message.bot_id) {
         return;
       }
 
@@ -1715,11 +1877,6 @@ app.event(
       // Only CODEX_TASK enters parser
       // ------------------------------------------------------
 
-      const normalizedText =
-        normalizeSlackText(
-          message.text
-        );
-
       if (
         !normalizedText.startsWith(
           "CODEX_TASK"
@@ -1741,12 +1898,33 @@ app.event(
             normalizedText
           );
       } catch (error) {
+        const parseStage = error.parseStage || "unknown";
+        const recognizedFields = Array.isArray(error.recognizedFields) && error.recognizedFields.length > 0
+          ? error.recognizedFields.join(",")
+          : "<none>";
+
         console.error(
-          "[REJECT] malformed CODEX_TASK"
+          "[REJECT]"
         );
 
         console.error(
-          `reason: ${error.message}`
+          `task_id=${extractCodexTaskId(message.text) || "<unknown>"}`
+        );
+
+        console.error(
+          "stage=schema_validation"
+        );
+
+        console.error(
+          `parse_stage=${parseStage}`
+        );
+
+        console.error(
+          `recognized_fields=${recognizedFields}`
+        );
+
+        console.error(
+          `reason=${error.message}`
         );
 
         return;

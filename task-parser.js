@@ -21,6 +21,22 @@ function normalizeBrowserUrl(value) {
   return slackAutolink ? slackAutolink[1].trim() : rawUrl;
 }
 
+function extractCodexTaskId(rawText) {
+  const normalized = normalizeSlackText(rawText);
+  // This is audit-only extraction: accept common malformed separators so a
+  // rejected task can still be correlated with its submitted task_id. The
+  // schema parser below remains the authority for accepting a CODEX_TASK.
+  const match = normalized.match(/^[ \t]*task_id[ \t]*(?::|=|[ \t]+)[ \t]*(\S+)/m);
+  return match ? match[1] : null;
+}
+
+function schemaValidationError(reason, parseStage, recognizedFields) {
+  const error = new Error(reason);
+  error.parseStage = parseStage;
+  error.recognizedFields = Array.from(recognizedFields);
+  return error;
+}
+
 function parseCodexTask(text) {
   const normalized = normalizeSlackText(text);
   if (!normalized.startsWith("CODEX_TASK")) return null;
@@ -38,6 +54,7 @@ function parseCodexTask(text) {
   };
   let inInstruction = false;
   const instructionLines = [];
+  const recognizedFields = new Set();
 
   for (const line of normalized.split(/\r?\n/).slice(1)) {
     if (inInstruction) {
@@ -48,6 +65,7 @@ function parseCodexTask(text) {
     if (!match) continue;
     const [, key, rawValue] = match;
     const value = rawValue.trim();
+    if (Object.prototype.hasOwnProperty.call(task, key)) recognizedFields.add(key);
     if (key === "instruction" && value === "|") {
       inInstruction = true;
       continue;
@@ -56,16 +74,18 @@ function parseCodexTask(text) {
   }
 
   if (instructionLines.length > 0) task.instruction = instructionLines.join("\n").trim();
-  if (String(task.schema_version) !== "1") throw new Error("unsupported_schema_version");
+  if (String(task.schema_version) !== "1") {
+    throw schemaValidationError("unsupported_schema_version", "schema_version", recognizedFields);
+  }
   for (const key of ["task_id", "target_worker", "target_workspace", "target_repo", "instruction"]) {
-    if (!task[key]) throw new Error(`missing_${key}`);
+    if (!task[key]) throw schemaValidationError(`missing_${key}`, "required_fields", recognizedFields);
   }
 
   const browserFieldsPresent = [task.browser_evidence, task.browser_url, task.browser_viewport]
     .some((value) => value !== null);
   if (browserFieldsPresent) {
     if (task.browser_evidence !== "screenshot" || !task.browser_url || !task.browser_viewport) {
-      throw new Error("invalid_browser_evidence_request");
+      throw schemaValidationError("invalid_browser_evidence_request", "browser_evidence", recognizedFields);
     }
     task.browser_url = normalizeBrowserUrl(task.browser_url);
     task.browser_evidence = {
@@ -77,4 +97,4 @@ function parseCodexTask(text) {
   return task;
 }
 
-module.exports = { normalizeSlackText, parseCodexTask };
+module.exports = { extractCodexTaskId, normalizeSlackText, parseCodexTask };

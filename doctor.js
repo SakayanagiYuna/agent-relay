@@ -5,6 +5,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 const { discoverCodexExecutable } = require("./codex-discovery");
 const { parseLoopbackUrl, resolveBrowserExecutablePath } = require("./browser-evidence");
+const { validateRelayCallbackUrl } = require("./browser-callback");
 
 const ROOT = __dirname;
 const REQUIRED_KEYS = [
@@ -191,7 +192,12 @@ function checkCodex({ env, runCommand = run, fsModule = fs } = {}) {
 
 function checkBrowser({ env, fileValues, fsModule = fs } = {}) {
   const enabled = valueOf(env, fileValues, "AGENT_RELAY_BROWSER_EVIDENCE_ENABLED") === "true";
-  if (!enabled) return result("WARN", "browser evidence disabled (informational)");
+  const callbackUrl = valueOf(env, fileValues, "AGENT_RELAY_BROWSER_CALLBACK_URL");
+  if (callbackUrl) {
+    try { validateRelayCallbackUrl(callbackUrl); }
+    catch (error) { return result("FAIL", `invalid browser callback URL: ${redact(error.message)}`); }
+  }
+  if (!enabled) return result("WARN", `browser evidence disabled (informational)${callbackUrl ? "; browser callback endpoint validated" : ""}`);
   const origins = valueOf(env, fileValues, "AGENT_RELAY_BROWSER_ALLOWED_ORIGINS").split(",").map((v) => v.trim()).filter(Boolean);
   if (!origins.length) return result("FAIL", "browser evidence is enabled but allowed origins are missing");
   try { origins.forEach((origin) => { const parsed = parseLoopbackUrl(origin); if (parsed.origin !== origin.replace(/\/$/, "")) throw new Error("allowed origins must be exact loopback origins"); }); }
@@ -202,7 +208,7 @@ function checkBrowser({ env, fileValues, fsModule = fs } = {}) {
   if (browserPath) { try { resolveBrowserExecutablePath(browserPath); } catch { return result("FAIL", "configured browser executable is invalid or missing"); } }
   const evidenceRoot = path.resolve(valueOf(env, fileValues, "AGENT_RELAY_PATH"), ".agent-relay");
   if (evidenceRoot !== path.resolve(ROOT, ".agent-relay")) return result("FAIL", "evidence directory is not the current Agent Relay .agent-relay location");
-  return result("PASS", "enabled browser paths, origins, timeout, and evidence location validated");
+  return result("PASS", `enabled browser paths, origins, timeout, and evidence location validated${callbackUrl ? "; browser callback endpoint validated" : ""}`);
 }
 
 function checkTests({ runCommand = run, root = ROOT, ...options } = {}) {
