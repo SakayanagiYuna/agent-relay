@@ -1,5 +1,6 @@
 const { App } = require("@slack/bolt");
 const fs = require("fs");
+const http = require("http");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const {
@@ -9,9 +10,11 @@ const {
   redactText: redactBrowserText,
   resolveBrowserExecutablePath,
 } = require("./browser-evidence");
+const { validateRelayCallbackUrl } = require("./browser-callback");
 const { normalizeSlackText, parseCodexTask } = require("./task-parser");
 const { buildContext } = require("./context-builder");
 const { resolveCodexExecutable } = require("./codex-discovery");
+const { buildCompletionSummary, buildHeartbeatText, createExecutionHeartbeat } = require("./execution-heartbeat");
 
 // ============================================================
 // Agent Relay V5.5
@@ -191,6 +194,9 @@ const BROWSER_ALLOWED_ORIGINS = String(process.env.AGENT_RELAY_BROWSER_ALLOWED_O
   .split(",").map((value) => value.trim()).filter(Boolean);
 const BROWSER_EXECUTABLE_PATH = process.env.AGENT_RELAY_BROWSER_EXECUTABLE_PATH
   ? resolveBrowserExecutablePath(requireLocalPath("AGENT_RELAY_BROWSER_EXECUTABLE_PATH"))
+  : "";
+const BROWSER_CALLBACK_URL = process.env.AGENT_RELAY_BROWSER_CALLBACK_URL
+  ? validateRelayCallbackUrl(process.env.AGENT_RELAY_BROWSER_CALLBACK_URL)
   : "";
 
 if (BROWSER_EVIDENCE_ENABLED) {
@@ -645,6 +651,55 @@ async function sendStatus({
   );
 
   return result;
+}
+
+async function sendHeartbeat({ channelId, task, execution }) {
+  await app.client.chat.postMessage({
+    channel: channelId,
+    text: buildHeartbeatText({
+      taskId: task.task_id,
+      workerId: WORKER_ID,
+      elapsedMs: execution.elapsed_ms,
+    }),
+  });
+  console.log(`[HEARTBEAT] task_id=${task.task_id} status=RUNNING elapsed_ms=${execution.elapsed_ms}`);
+}
+
+function postBrowserCallback({ taskId, status, endpoint = BROWSER_CALLBACK_URL, requestFn = http.request }) {
+  if (!endpoint) return Promise.resolve({ skipped: true });
+  const target = new URL(endpoint);
+  const body = JSON.stringify({ task_id: taskId, status });
+  return new Promise((resolve, reject) => {
+    const request = requestFn({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || 80,
+      path: target.pathname,
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+      timeout: 5000,
+    }, (response) => {
+      response.resume();
+      response.on("end", () => {
+        if (response.statusCode >= 200 && response.statusCode < 300) resolve({ delivered: true });
+        else reject(new Error(`browser_callback_http_${response.statusCode}`));
+      });
+    });
+    request.once("timeout", () => request.destroy(new Error("browser_callback_timeout")));
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
+async function notifyBrowserCallback({ task, status }) {
+  if (!BROWSER_CALLBACK_URL) return;
+  try {
+    await postBrowserCallback({ taskId: task.task_id, status });
+    console.log(`[CALLBACK] task_id=${task.task_id} status=${status} delivered`);
+  } catch (error) {
+    // Slack CODEX_STATUS has already been delivered and remains the sole lifecycle record.
+    console.error(`[CALLBACK] task_id=${task.task_id} status=${status} not delivered: ${error.message}`);
+  }
 }
 
 async function uploadBrowserEvidence({ channelId, task, evidence }) {
@@ -1577,6 +1632,13 @@ async function runTaskLifecycle({
   task,
   route,
 }) {
+  const execution = createExecutionHeartbeat({
+    taskId: task.task_id,
+    workerId: WORKER_ID,
+    onHeartbeat: (current) => sendHeartbeat({ channelId, task, execution: current }),
+    onError: (error) => console.error(`[HEARTBEAT] task_id=${task.task_id} status=RUNNING not sent: ${error.message}`),
+  });
+
   try {
     await sendStatus({
       channelId,
@@ -1590,6 +1652,9 @@ async function runTaskLifecycle({
       summary:
         `Agent Relay accepted the task. Codex Worker is starting in ${CODEX_SANDBOX_MODE} sandbox.`,
     });
+
+    const executionContext = execution.start();
+    console.log(`[LIFECYCLE] task_id=${executionContext.task_id} worker_id=${executionContext.worker_id} started_at=${executionContext.started_at} status=${executionContext.current_status}`);
 
 
     const result =
@@ -1610,6 +1675,14 @@ async function runTaskLifecycle({
       }
     }
 
+    const terminalExecution = execution.stop(result.status);
+    result.summary = `${buildCompletionSummary({
+      status: result.status,
+      taskId: task.task_id,
+      workerId: WORKER_ID,
+      elapsedMs: terminalExecution.elapsed_ms,
+    })}\n\n${result.summary}`;
+
 
     await sendStatus({
       channelId,
@@ -1624,6 +1697,11 @@ async function runTaskLifecycle({
         result.summary,
     });
 
+    await notifyBrowserCallback({
+      task,
+      status: result.status,
+    });
+
 
     console.log(
       `[LIFECYCLE] task_id=${task.task_id} finished=${result.status}`
@@ -1633,6 +1711,7 @@ async function runTaskLifecycle({
       "==============================="
     );
   } catch (error) {
+    const terminalExecution = execution.stop("FAILED");
     console.error("");
 
     console.error(
@@ -1654,8 +1733,18 @@ async function runTaskLifecycle({
         task,
         route,
 
-        summary:
-          `Agent Relay Worker internal failure: ${error.message}`,
+      summary:
+          `${buildCompletionSummary({
+            status: "FAILED",
+            taskId: task.task_id,
+            workerId: WORKER_ID,
+            elapsedMs: terminalExecution.elapsed_ms,
+          })}\n\nAgent Relay Worker internal failure: ${error.message}`,
+      });
+
+      await notifyBrowserCallback({
+        task,
+        status: "FAILED",
       });
     } catch (
       statusError

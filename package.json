@@ -4,7 +4,7 @@
   "description": "A local, allowlisted Slack-to-Codex execution relay with optional browser evidence.",
   "main": "index.js",
   "scripts": {
-    "test": "npm run test:parser && npm run test:context-builder && npm run test:codex-discovery && npm run test:doctor && npm run test:host-boundary && npm run test:rendered-state && npm run test:resource-routing && npm run test:browser-callback",
+    "test": "npm run test:parser && npm run test:context-builder && npm run test:codex-discovery && npm run test:doctor && npm run test:host-boundary && npm run test:rendered-state && npm run test:resource-routing && npm run test:browser-callback && npm run test:execution-heartbeat",
     "start": "node listener.js",
     "browser-callback": "node browser-callback.js",
     "test:parser": "node task-parser.regression.js",
@@ -15,6 +15,7 @@
     "test:rendered-state": "node browser-evidence.rendered-state.regression.js",
     "test:resource-routing": "node browser-evidence.resource-routing.regression.js",
     "test:browser-callback": "node browser-callback.regression.js",
+    "test:execution-heartbeat": "node execution-heartbeat.regression.js",
     "doctor": "node doctor.js"
   },
   "keywords": [],

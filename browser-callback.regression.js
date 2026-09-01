@@ -1,7 +1,7 @@
 "use strict";
 const assert = require("assert");
 const http = require("http");
-const { BOUND_NAVIGATION_ORIGINS, CHANNELS, EVENT_SCHEMA, attachViaPlaywrightCli, cliLaunchSpec, createCallbackServer, createCliContext, extractChatInputRef, extractSnapshotTextboxRef, extractTabs, extractUrls, isAllowedBoundNavigation, isAllowedChatGPTOrigin, npxCliEntrypoint, parseAttachArguments, renderAgentRelayEvent, resolveChatComposer, targetIdentity, validateAttachEndpoint, validateCallback } = require("./browser-callback");
+const { BOUND_NAVIGATION_ORIGINS, CHANNELS, EVENT_SCHEMA, attachViaPlaywrightCli, cliLaunchSpec, createCallbackServer, createCliContext, extractChatInputRef, extractSnapshotTextboxRef, extractTabs, extractUrls, isAllowedBoundNavigation, isAllowedChatGPTOrigin, npxCliEntrypoint, parseAttachArguments, renderAgentRelayEvent, resolveChatComposer, targetIdentity, validateAttachEndpoint, validateCallback, validateRelayCallbackUrl } = require("./browser-callback");
 
 assert.deepStrictEqual(CHANNELS, ["msedge", "chrome"]);
 assert.strictEqual(isAllowedChatGPTOrigin("https://chatgpt.com/c/abc"), true);
@@ -15,6 +15,8 @@ assert.deepStrictEqual(parseAttachArguments([], { AGENT_RELAY_BROWSER_CDP_ENDPOI
 assert.throws(() => parseAttachArguments(["--channel", "firefox"], {}), /channel_must/);
 assert.throws(() => validateAttachEndpoint("http://127.0.0.1:9222"), /explicit_local_ws/);
 assert.throws(() => validateAttachEndpoint("ws://127.0.0.1:9222/devtools/page/page-id"), /browser_cdp/);
+assert.strictEqual(validateRelayCallbackUrl("http://127.0.0.1:8787/api/callback"), "http://127.0.0.1:8787/api/callback");
+assert.throws(() => validateRelayCallbackUrl("https://chatgpt.com/api/callback"), /explicit_loopback/);
 assert.deepStrictEqual(extractUrls("# Tab 0 - https://bilibili.com/video/1\n# Tab 1 - https://chatgpt.com/c/target"), ["https://bilibili.com/video/1", "https://chatgpt.com/c/target"]);
 assert.deepStrictEqual(extractTabs("### Result\n- 5: [网站改进建议](https://chatgpt.com/c/target)"), [{ index: 5, title: "网站改进建议", url: "https://chatgpt.com/c/target" }]);
 assert.strictEqual(extractChatInputRef('- textbox "与 ChatGPT 聊天" [ref=e1217]'), "e1217");
@@ -56,6 +58,7 @@ function request(relay, method, route, body) { return new Promise((resolve, reje
     result = await request(relay, "GET", "/api/state"); assert.strictEqual(result.body.bound, true); assert.strictEqual(result.body.armed, false);
     result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.body.error, "send_guard_blocked");
     result = await request(relay, "POST", "/api/arm"); assert.strictEqual(result.status, 200);
+    result = await request(relay, "POST", "/api/callback", { task_id: "TASK-045", status: "DONE" }); assert.strictEqual(result.status, 200); assert.deepStrictEqual(calls, [["fill", '{"schema_version":1,"event":"task_terminal","action":"REVIEW","task_id":"TASK-045","status":"DONE"}'], ["press", "Enter"]]); calls.length = 0;
     result = await request(relay, "POST", "/api/mock-callback", { task_id: "TASK-045", status: "BLOCKED" }); assert.match(result.body.event, /"status":"BLOCKED"/);
     result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.status, 200); assert.deepStrictEqual(calls, [["fill", result.body.error ? "" : '{"schema_version":1,"event":"task_terminal","action":"REVIEW","task_id":"TASK-045","status":"BLOCKED"}'], ["press", "Enter"]]);
     currentUrl = "https://chatgpt.com/c/other"; navigationHandler(); result = await request(relay, "GET", "/api/state"); assert.strictEqual(result.body.armed, false); result = await request(relay, "POST", "/api/send"); assert.strictEqual(result.body.error, "send_guard_blocked");

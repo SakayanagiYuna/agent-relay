@@ -1,6 +1,43 @@
 # Agent Relay
 
-Agent Relay 是本地、按 allowlist 控制的 Slack-to-Codex 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。Browser Callback PoC 只执行人工 mock callback，不接入真实 `CODEX_STATUS` 自动触发。
+Agent Relay 是本地、按 allowlist 控制的 Slack-to-Codex 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。Browser Callback 可选地接收 Relay 在终态 `CODEX_STATUS` 成功发送后的本地 callback；Slack 仍是唯一生命周期事实来源。
+
+## Execution Heartbeat v1
+
+每个 Codex execution 在 `START` 成功发送后创建本地 execution context：`task_id`、`worker_id`、`started_at`、`current_status` 与 `last_heartbeat_at`。当执行仍为 `RUNNING` 时，Relay 每 30 秒发送一次独立的 Slack heartbeat；它不是 `CODEX_STATUS`，不会改变任务事实状态，也不会触发 Browser Callback。终态 `DONE`、`BLOCKED` 或 `FAILED` 会先停止并清理 timer，再发送带最终耗时的 `CODEX_STATUS`。timer 使用 `unref()`，不会阻止 Node 正常退出。
+
+Slack heartbeat 示例：
+
+```text
+Agent Relay heartbeat
+
+Task:
+TASK-054
+
+Worker:
+dev-pc-b
+
+Status:
+RUNNING
+
+Elapsed:
+05m32s
+```
+
+终态摘要示例：
+
+```text
+Task completed
+
+Task:
+TASK-054
+
+Worker:
+dev-pc-b
+
+Duration:
+14m32s
+```
 
 ## 安装与启动
 
@@ -21,6 +58,15 @@ Windows launcher 使用固定的 `process.execPath` 执行 npm 的 `npx-cli.js`�
 控制页只展示 allowlisted ChatGPT 页面。页面 identity 为 origin + conversation pathname；每次刷新和发送前都会重新核对该 identity，CLI 操作会先对对应的真实 tab 执行官方 `tab-select <index>`，然后才使用可见 textarea 和 Enter。非 ChatGPT tab 会保留其真实 tab index，不会因过滤展示列表而错选当前 tab。
 
 Bind 与 Arm 是两个独立的用户操作：Bind 只保存目标对话，Arm 才开启发送权限；未 Armed 时 callback 和 send 都会被拒绝。绑定对话离开 allowlisted origin、conversation identity 变化或目标消失时会自动 disarm，并清除待发送事件。
+
+要启用 Callback Loop v1，先按上述步骤启动 Browser Callback、完成目标 conversation 的 Bind 和 Arm，再为 Relay 配置精确的本机 endpoint：
+
+```powershell
+$env:AGENT_RELAY_BROWSER_CALLBACK_URL="http://127.0.0.1:8787/api/callback"
+npm start
+```
+
+Relay 只会在 `DONE`、`BLOCKED` 或 `FAILED` 的 `CODEX_STATUS` 已成功发送到 Slack 后，向该 endpoint 发送 `{ task_id, status }`。Browser Callback 会沿用既有 Bind → Arm → Render → Send 流程，通过已绑定且复核过 identity 的 ChatGPT 可见输入框发出冻结的 `AGENT_RELAY_EVENT v1`。未启动、未 Armed 或发送失败只记录本地 callback 错误，不改变或补写 Slack 生命周期。
 
 ### Windows Edge 真实手动 E2E
 
@@ -59,6 +105,7 @@ endpoint 必须是本地、无认证信息、无 query/hash 的 `ws://.../devtoo
 ```powershell
 node --check browser-callback.js
 node --check browser-callback.regression.js
+npm run test:execution-heartbeat
 npm run test:browser-callback
 npm test
 git diff --check
@@ -70,7 +117,7 @@ git diff --check
 
 进程环境变量优先于 `.env`；本地 `.env` 会被忽略且不会上传。Slack 身份验证、schema 与路由 allowlist、持久化去重、单任务队列、Git/trust 校验、sandbox 限制，以及不经过 shell 的 Codex 直接调用均保持启用。Relay 不会自动 push、deploy、publish 或修改远程服务。
 
-配置包括 `AGENT_RELAY_WORKER_ID`、`AGENT_RELAY_ALLOWED_USER_ID`、`AGENT_RELAY_CHATGPT_APP_ID`、`AGENT_RELAY_CHANNEL_ID`、`AGENT_RELAY_ATELIER_OF_MEMORY_PATH`、`AGENT_RELAY_PATH`、`AGENT_RELAY_LOG_LEVEL` 和可选的 `AGENT_RELAY_BROWSER_EVIDENCE_*`；Slack 凭据、`CODEX_BIN` 与 `CODEX_TIMEOUT_MS` 按现有部署需要配置。
+配置包括 `AGENT_RELAY_WORKER_ID`、`AGENT_RELAY_ALLOWED_USER_ID`、`AGENT_RELAY_CHATGPT_APP_ID`、`AGENT_RELAY_CHANNEL_ID`、`AGENT_RELAY_ATELIER_OF_MEMORY_PATH`、`AGENT_RELAY_PATH`、`AGENT_RELAY_LOG_LEVEL` 和可选的 `AGENT_RELAY_BROWSER_EVIDENCE_*`、`AGENT_RELAY_BROWSER_CALLBACK_URL`；Slack 凭据、`CODEX_BIN` 与 `CODEX_TIMEOUT_MS` 按现有部署需要配置。
 
 Browser Evidence 仅在 Relay 主机上运行，只访问已配置的 loopback origins，并将任务范围内的 PNG 写入被忽略的 `.agent-relay/evidence/<TASK_ID>/` 目录；它不会访问凭据、浏览器 profile、cookies 或 local storage。
 
