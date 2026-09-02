@@ -48,6 +48,7 @@ function parseCodexTask(text) {
     target_workspace: null,
     target_repo: null,
     agent: "codex",
+    conversation: "continue",
     instruction: null,
     browser_evidence: null,
     browser_url: null,
@@ -84,6 +85,10 @@ function parseCodexTask(text) {
 
   if (!new Set(["codex", "grok"]).has(task.agent)) {
     throw schemaValidationError("unsupported_agent", "agent", recognizedFields);
+  }
+  if (!task.conversation) task.conversation = "continue";
+  if (!new Set(["continue", "new"]).has(task.conversation)) {
+    throw schemaValidationError("unsupported_conversation", "conversation", recognizedFields);
   }
 
   const browserFieldsPresent = [task.browser_evidence, task.browser_url, task.browser_viewport]

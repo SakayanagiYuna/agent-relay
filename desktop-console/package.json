@@ -1,0 +1,16 @@
+{
+  "name": "agent-relay-desktop-console",
+  "private": true,
+  "version": "0.1.0",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/ipc-contract.regression.js && node test/process-supervisor.regression.js && node test/shutdown-coordinator.regression.js && node test/renderer-state.regression.js && node test/window-dock.regression.js"
+  },
+  "devDependencies": {
+    "electron": "^39.8.10"
+  },
+  "dependencies": {
+    "koffi": "^3.1.6"
+  }
+}

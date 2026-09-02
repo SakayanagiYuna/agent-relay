@@ -1,0 +1,3 @@
+"use strict";
+const assert = require("assert"); const { needsProtection, ShutdownCoordinator } = require("../src/shutdown-coordinator");
+assert(needsProtection({ task: { status: "RUNNING" }, browser_evidence: { state: "IDLE" } })); assert(needsProtection({ task: null, browser_evidence: { state: "UPLOADING" } })); assert(!needsProtection({ task: null, browser_evidence: { state: "IDLE" } })); let stopped = null; const coordinator = new ShutdownCoordinator({ stop: async (mode) => { stopped = mode; } }); coordinator.choose("when-idle").then(async () => { assert.strictEqual(stopped, null); await coordinator.observe({ task: null, browser_evidence: { state: "IDLE" } }); assert.strictEqual(stopped, "when-idle"); console.log("shutdown-coordinator regression: passed"); });

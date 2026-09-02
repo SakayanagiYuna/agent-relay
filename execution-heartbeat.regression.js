@@ -24,7 +24,7 @@ let cleared = false;
 const heartbeats = [];
 const heartbeat = createExecutionHeartbeat({
   taskId: "TASK-054",
-  workerId: "dev-pc-b",
+  workerId: "worker-1",
   now: () => new Date(nowMs),
   setIntervalFn: (callback, intervalMs) => { scheduled = { callback, intervalMs, unrefCalled: false, unref() { this.unrefCalled = true; } }; return scheduled; },
   clearIntervalFn: (timer) => { assert.strictEqual(timer, scheduled); cleared = true; },
@@ -32,7 +32,7 @@ const heartbeat = createExecutionHeartbeat({
 });
 
 const started = heartbeat.start();
-assert.deepStrictEqual(started, { task_id: "TASK-054", worker_id: "dev-pc-b", started_at: "2026-09-01T00:00:00.000Z", current_status: "RUNNING", last_heartbeat_at: "2026-09-01T00:00:00.000Z" });
+assert.deepStrictEqual(started, { task_id: "TASK-054", worker_id: "worker-1", started_at: "2026-09-01T00:00:00.000Z", current_status: "RUNNING", last_heartbeat_at: "2026-09-01T00:00:00.000Z" });
 assert.strictEqual(scheduled.intervalMs, 30_000);
 assert.strictEqual(scheduled.unrefCalled, true, "heartbeat timer must not keep Node alive");
 nowMs += 32_000;
@@ -43,12 +43,12 @@ nowMs += 32_000;
   assert.strictEqual(heartbeats[0].elapsed_ms, 32_000);
   const debugLogs = [];
   const debugHeartbeat = createDebugHeartbeatLogger({ enabled: true, write: (message) => debugLogs.push(message) });
-  assert.strictEqual(debugHeartbeat({ taskId: "TASK-057", workerId: "dev-pc-b", elapsedMs: 210_000 }), true);
-  assert.deepStrictEqual(debugLogs, ["[HEARTBEAT]\ntask_id=TASK-057\nworker=dev-pc-b\nelapsed=03m30s"], "debug logging must capture heartbeat output");
+  assert.strictEqual(debugHeartbeat({ taskId: "TASK-057", workerId: "worker-1", elapsedMs: 210_000 }), true);
+  assert.deepStrictEqual(debugLogs, ["[HEARTBEAT]\ntask_id=TASK-057\nworker=worker-1\nelapsed=03m30s"], "debug logging must capture heartbeat output");
 
   const normalLogs = [];
   const normalHeartbeat = createDebugHeartbeatLogger({ enabled: false, write: (message) => normalLogs.push(message) });
-  assert.strictEqual(normalHeartbeat({ taskId: "TASK-057", workerId: "dev-pc-b", elapsedMs: 210_000 }), false);
+  assert.strictEqual(normalHeartbeat({ taskId: "TASK-057", workerId: "worker-1", elapsedMs: 210_000 }), false);
   assert.deepStrictEqual(normalLogs, [], "normal logs must hide heartbeat output");
 
   nowMs += 28_000;
@@ -60,16 +60,16 @@ nowMs += 32_000;
   await scheduled.callback();
   assert.strictEqual(heartbeats.length, 1, "DONE must stop heartbeats");
 
-  const failed = createExecutionHeartbeat({ taskId: "TASK-055", workerId: "dev-pc-b", now: () => new Date(nowMs), setIntervalFn: () => ({ unref() {} }), clearIntervalFn: () => {} });
+  const failed = createExecutionHeartbeat({ taskId: "TASK-055", workerId: "worker-1", now: () => new Date(nowMs), setIntervalFn: () => ({ unref() {} }), clearIntervalFn: () => {} });
   failed.start();
   failed.stop("FAILED");
   assert.strictEqual(failed.isRunning(), false, "FAILED must stop heartbeats");
-  const blocked = createExecutionHeartbeat({ taskId: "TASK-056", workerId: "dev-pc-b", now: () => new Date(nowMs), setIntervalFn: () => ({ unref() {} }), clearIntervalFn: () => {} });
+  const blocked = createExecutionHeartbeat({ taskId: "TASK-056", workerId: "worker-1", now: () => new Date(nowMs), setIntervalFn: () => ({ unref() {} }), clearIntervalFn: () => {} });
   blocked.start();
   assert.strictEqual(blocked.stop("BLOCKED").context.current_status, "BLOCKED", "BLOCKED must be retained as a terminal execution state");
   assert.throws(() => blocked.stop("RUNNING"), /terminal_status_invalid/);
   assert.strictEqual(formatElapsed(332000), "05m32s");
-  assert.strictEqual(buildHeartbeatLog({ taskId: "TASK-054", workerId: "dev-pc-b", elapsedMs: 332000 }), "[HEARTBEAT]\ntask_id=TASK-054\nworker=dev-pc-b\nelapsed=05m32s");
-  assert.match(buildCompletionSummary({ status: "DONE", taskId: "TASK-054", workerId: "dev-pc-b", elapsedMs: 872000 }), /Duration:\n14m32s/);
+  assert.strictEqual(buildHeartbeatLog({ taskId: "TASK-054", workerId: "worker-1", elapsedMs: 332000 }), "[HEARTBEAT]\ntask_id=TASK-054\nworker=worker-1\nelapsed=05m32s");
+  assert.match(buildCompletionSummary({ status: "DONE", taskId: "TASK-054", workerId: "worker-1", elapsedMs: 872000 }), /Duration:\n14m32s/);
   console.log("execution state and heartbeat lifecycle regression passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -4,7 +4,7 @@
 
 本版本相对 V5.6 的完整变更如下：
 
-- 协议：`CODEX_TASK` 与 `CODEX_STATUS` 名称、schema version `1` 和任务必填字段保持不变。可选 `agent` 扩展字段省略时固定为 `codex`，也可显式为 `grok`（底层为 Grok Build CLI）；不做自动选择或失败 fallback。parser 在拒绝时记录可解析的 `task_id`、`stage=schema_validation`、更细的 parse stage、recognized fields 与 reason；该提取仅用于审计，不能放宽接收 schema，拒绝工单仍可按编号追踪。
+- 协议：`CODEX_TASK` 与 `CODEX_STATUS` 名称、schema version `1` 和任务必填字段保持不变。可选 `agent` 扩展字段省略时固定为 `codex`，也可显式为 `grok`（底层为 Grok Build CLI）；不做自动选择或失败 fallback。可选 `conversation` 扩展字段省略时为 `continue`，同一 worker 上相同 workspace/repo/agent 的后续工单续上一次会话；仅 `conversation: new` 强制新开。parser 在拒绝时记录可解析的 `task_id`、`stage=schema_validation`、更细的 parse stage、recognized fields 与 reason；该提取仅用于审计，不能放宽接收 schema，拒绝工单仍可按编号追踪。
 - 生命周期：新增显式 execution state 模块，状态仅允许 `START -> RUNNING -> DONE | FAILED | BLOCKED`。heartbeat 每 30 秒更新本机 context，在 debug 终端/log 中输出，既不发布 Slack `RUNNING`，也不触发 Browser Callback。
 - Slack 审计：终态 `CODEX_STATUS` 统一输出 duration、Git commit、changed files、diff summary 与可识别的 test result；`DONE` 使用 summary，`FAILED`/`BLOCKED` 使用 reason。完整 stdout、stderr、diff 和 heartbeat 继续不进入 Slack。
 - 终态分发：`task_terminal` event 在 Slack 终态成功后由 Browser Callback 和 Human Notification 并行独立消费。Browser 或通知失败只留下本机 `BROWSER_CALLBACK_FAILED` / `HUMAN_NOTIFY_FAILED`，不修改 Slack 事实状态。
@@ -50,8 +50,8 @@ CODEX_STATUS
 schema_version: 1
 task_id: TASK-063
 status: DONE
-worker: dev-pc-b
-workspace: baiyuan
+worker: worker-1
+workspace: workspace-1
 repo: agent-relay
 duration: 00m42s
 git_commit: abc1234
@@ -69,7 +69,7 @@ Human Notification provider 默认 `disabled`/noop。首个 `email` provider 的
 
 Browser Callback 只接受已 Bind 且已 Arm 的目标 conversation；收到事件后保持 Bind → Arm → Render → Send 顺序，复核 allowlisted ChatGPT origin 和 conversation identity，再通过可见输入框与 Enter 唤醒该 conversation。它不回退到当前/默认 tab，不读取 cookie、profile、session 或 storage，也不越过浏览器安全边界。
 
-V5.7 的 Browser Runtime 以 Relay 专用 persistent profile 启动可见的原生 Chromium/Chrome，并只在 loopback CDP 上接受 Relay attach。默认 profile 位于 `.agent-relay/browser-profile`，绝不复用日常浏览器 profile、cookie、storage 或其他 tab。首次启动由用户完成登录；Relay 不填写账号、密码或 MFA。profile 派生稳定的 `browser_context_id`，所以 target 只可在所属 context 中 resolve，不能回退或控制其他 context。
+V5.7 的 Browser Runtime 以 Relay 专用 persistent profile 启动可见的原生 Chromium/Chrome，并只在 loopback CDP 上接受 Relay attach。默认 profile 位于 `.agent-relay/chrome-profile`，绝不复用日常浏览器 profile、cookie、storage 或其他 tab。首次启动由用户完成登录；Relay 不填写账号、密码或 MFA。profile 派生稳定的 `browser_context_id`，所以 target 只可在所属 context 中 resolve，不能回退或控制其他 context。
 
 Relay 主机使用 `npm run browser:init` 创建或加载 profile 并打开 allowlisted `start_url`，再使用 `npm run browser-callback -- runtime` 连接该运行时。入口输出 profile path、headless、native context 和 authentication state；认证状态固定为 `unknown`，不推断账号是否有效。设定 `AGENT_RELAY_BROWSER_RUNTIME_ENABLED=false` 时入口安全退出且不启动浏览器。
 

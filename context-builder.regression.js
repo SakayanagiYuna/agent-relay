@@ -4,9 +4,9 @@ const assert = require("assert");
 const { parseCodexTask } = require("./task-parser");
 const { buildContext, selectContextFragments } = require("./context-builder");
 
-const route = { workspace_id: "baiyuan", repo_id: "agent-relay", local_path: __dirname, sandboxMode: "workspace-write" };
+const route = { workspace_id: "workspace-1", repo_id: "agent-relay", local_path: __dirname, sandboxMode: "workspace-write" };
 function task(instruction, extra = "") {
-  return parseCodexTask(`CODEX_TASK\nschema_version: 1\ntask_id: TASK-CONTEXT\ntarget_worker: worker-1\ntarget_workspace: baiyuan\ntarget_repo: agent-relay\n${extra}instruction: |\n  ${instruction}`);
+  return parseCodexTask(`CODEX_TASK\nschema_version: 1\ntask_id: TASK-CONTEXT\ntarget_worker: worker-1\ntarget_workspace: workspace-1\ntarget_repo: agent-relay\n${extra}instruction: |\n  ${instruction}`);
 }
 
 const docs = buildContext({ task: task("Update docs/guide.md with Simplified Chinese documentation."), route });
@@ -28,6 +28,7 @@ const unrelated = buildContext({ task: task("Rename a local helper function."), 
 assert.deepStrictEqual(unrelated.selectedFragments, []);
 assert.deepStrictEqual(unrelated.prompt, buildContext({ task: task("Rename a local helper function."), route }).prompt);
 assert.deepStrictEqual(selectContextFragments(task("Update README.md documentation.")), ["docs"]);
+assert.match(unrelated.prompt, /Pre-existing dirty git state is not FAILED/);
 
 const acceptance = "acceptance-" + "x".repeat(5000);
 const longTask = task(`Implement change. Acceptance: ${acceptance}`);

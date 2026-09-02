@@ -2,7 +2,7 @@
 
 const assert = require("assert");
 const fs = require("fs");
-const { createPromptFile, describeGrokActivity, extractGrokSummary, extractGrokUsage, observeGrokStreamEvent, removePromptFile } = require("./grok-worker");
+const { buildGrokArgs, createPromptFile, describeGrokActivity, extractGrokSummary, extractGrokUsage, observeGrokStreamEvent, removePromptFile } = require("./grok-worker");
 
 assert.strictEqual(extractGrokSummary('{"result":"Implemented the requested change."}'), "Implemented the requested change.");
 assert.strictEqual(extractGrokSummary("plain response"), "plain response");
@@ -17,4 +17,10 @@ const promptFile = createPromptFile("untrusted Slack prompt");
 assert.strictEqual(fs.readFileSync(promptFile.filePath, "utf8"), "untrusted Slack prompt");
 removePromptFile(promptFile);
 assert.ok(!fs.existsSync(promptFile.directory));
+const grokArgs = buildGrokArgs({ repoPath: "D:\\repo", sandbox: "workspace", promptFilePath: "D:\\tmp\\prompt.txt" });
+assert.ok(!grokArgs.includes("--always-approve"));
+assert.ok(!grokArgs.includes("--continue"));
+assert.ok(!grokArgs.includes("--resume"));
+const resumedGrokArgs = buildGrokArgs({ repoPath: "D:\\repo", sandbox: "workspace", promptFilePath: "D:\\tmp\\prompt.txt", resumeSessionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" });
+assert.deepStrictEqual(resumedGrokArgs.slice(-4), ["--resume", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--prompt-file", "D:\\tmp\\prompt.txt"]);
 console.log("grok worker regression checks passed");

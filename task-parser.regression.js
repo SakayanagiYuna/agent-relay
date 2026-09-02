@@ -8,7 +8,7 @@ const task = parseCodexTask(`CODEX_TASK
 schema_version: 1
 task_id: TASK-025
 target_worker: worker-1
-target_workspace: baiyuan
+target_workspace: workspace-1
 target_repo: agent-relay
 browser_evidence: screenshot
 browser_url: <http://localhost:5173>
@@ -34,7 +34,7 @@ const validTask = `CODEX_TASK
 schema_version: 1
 task_id: TASK-SCHEMA-001
 target_worker: worker-1
-target_workspace: baiyuan
+target_workspace: workspace-1
 target_repo: agent-relay
 instruction: |
   Validate protocol fields.`;
@@ -51,6 +51,11 @@ function getParseError(text) {
 assert.strictEqual(parseCodexTask(validTask).task_id, "TASK-SCHEMA-001");
 assert.strictEqual(parseCodexTask(validTask).agent, "codex", "agent defaults to codex for existing tasks");
 assert.strictEqual(parseCodexTask(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nagent: grok")).agent, "grok");
+assert.strictEqual(parseCodexTask(validTask).conversation, "continue", "conversation defaults to continue");
+assert.strictEqual(parseCodexTask(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nconversation: new")).conversation, "new");
+const unsupportedConversationError = getParseError(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nconversation: fork"));
+assert.match(unsupportedConversationError.message, /unsupported_conversation/);
+assert.strictEqual(unsupportedConversationError.parseStage, "conversation");
 const unsupportedAgentError = getParseError(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nagent: claude"));
 assert.match(unsupportedAgentError.message, /unsupported_agent/);
 assert.strictEqual(unsupportedAgentError.parseStage, "agent");

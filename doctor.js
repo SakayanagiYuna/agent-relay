@@ -6,6 +6,7 @@ const { spawnSync } = require("child_process");
 const { discoverCodexExecutable } = require("./codex-discovery");
 const { parseLoopbackUrl, resolveBrowserExecutablePath } = require("./browser-evidence");
 const { validateRelayCallbackUrl } = require("./browser-callback");
+const { configuredRepoPaths, loadProjectsConfig } = require("./projects-config");
 
 const ROOT = __dirname;
 const REQUIRED_KEYS = [
@@ -13,13 +14,11 @@ const REQUIRED_KEYS = [
   "AGENT_RELAY_ALLOWED_USER_ID",
   "AGENT_RELAY_CHATGPT_APP_ID",
   "AGENT_RELAY_CHANNEL_ID",
-  "AGENT_RELAY_ATELIER_OF_MEMORY_PATH",
-  "AGENT_RELAY_PATH",
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
 ];
 const SLACK_KEYS = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "AGENT_RELAY_CHANNEL_ID"];
-const DEPRECATED_KEYS = ["TERRA_RELAY_PATH", "TERRA_ATELIER_OF_MEMORY_PATH", "TERRA_WORKER_ID", "TERRA_CHANNEL_ID"];
+const DEPRECATED_KEYS = ["TERRA_RELAY_PATH", "TERRA_ATELIER_OF_MEMORY_PATH", "TERRA_WORKER_ID", "TERRA_CHANNEL_ID", "AGENT_RELAY_PATH"];
 
 function parseEnvFile(text) {
   const values = {};
@@ -118,8 +117,22 @@ function checkRuntime(runCommand = run, options = {}) {
   return result("PASS", `Node ${String(node.stdout).trim()}, npm ${String(npm.stdout).trim()}`);
 }
 
+function checkProjects({ root = ROOT, fsModule = fs } = {}) {
+  try {
+    const config = loadProjectsConfig({ filePath: path.join(root, ".agent-relay", "projects.json"), fsModule });
+    return result("PASS", `workspace allowlist loaded (${Object.keys(config.repos).length} repo(s))`);
+  } catch (error) {
+    return result("FAIL", String(error.message || "projects_config_invalid"));
+  }
+}
+
 function checkRepository({ env, fileValues, root = ROOT, runCommand = run, fsModule = fs } = {}) {
-  const configured = [valueOf(env, fileValues, "AGENT_RELAY_PATH"), valueOf(env, fileValues, "AGENT_RELAY_ATELIER_OF_MEMORY_PATH")].filter(Boolean);
+  let configured = [];
+  try {
+    configured = configuredRepoPaths(loadProjectsConfig({ filePath: path.join(root, ".agent-relay", "projects.json"), fsModule }));
+  } catch {
+    configured = [];
+  }
   const paths = [...new Set([root, ...configured.map((entry) => path.resolve(entry))])];
   const warnings = [];
   for (const repoPath of paths) {
@@ -135,9 +148,9 @@ function checkRepository({ env, fileValues, root = ROOT, runCommand = run, fsMod
 
 function checkSecrets({ env, fileValues, envFilePath = path.join(ROOT, ".env"), fsModule = fs } = {}) {
   const missing = REQUIRED_KEYS.filter((key) => !valueOf(env, fileValues, key));
-  const deprecated = Object.keys({ ...fileValues, ...env }).filter((key) => /^TERRA_/.test(key));
+  const deprecated = Object.keys({ ...fileValues, ...env }).filter((key) => DEPRECATED_KEYS.includes(key) || /^TERRA_/.test(key));
   if (missing.length) return result("FAIL", `missing required configuration: ${missing.join(", ")}`);
-  if (deprecated.length) return result("WARN", "deprecated TERRA_* configuration detected; migrate to AGENT_RELAY_* names");
+  if (deprecated.length) return result("WARN", "deprecated machine-specific configuration detected; move repo allowlist to .agent-relay/projects.json");
   if (fsModule.existsSync(envFilePath)) {
     const tracked = run("git", ["ls-files", "--error-unmatch", path.relative(ROOT, envFilePath)]);
     if (tracked.status !== 0 && tracked.error && ["EPERM", "EACCES"].includes(tracked.error.code)) return result("WARN", ".env ignore/tracking probe was blocked by local permission or policy");
@@ -206,8 +219,6 @@ function checkBrowser({ env, fileValues, fsModule = fs } = {}) {
   if (!Number.isSafeInteger(timeout) || timeout < 1000 || timeout > 60000) return result("FAIL", "browser timeout must be 1000-60000ms");
   const browserPath = valueOf(env, fileValues, "AGENT_RELAY_BROWSER_EXECUTABLE_PATH");
   if (browserPath) { try { resolveBrowserExecutablePath(browserPath); } catch { return result("FAIL", "configured browser executable is invalid or missing"); } }
-  const evidenceRoot = path.resolve(valueOf(env, fileValues, "AGENT_RELAY_PATH"), ".agent-relay");
-  if (evidenceRoot !== path.resolve(ROOT, ".agent-relay")) return result("FAIL", "evidence directory is not the current Agent Relay .agent-relay location");
   return result("PASS", `enabled browser paths, origins, timeout, and evidence location validated${callbackUrl ? "; browser callback endpoint validated" : ""}`);
 }
 
@@ -226,6 +237,7 @@ async function runDoctor({ env = process.env, root = ROOT, runCommand = run, fsM
   }
   const checks = [];
   checks.push(["Runtime", checkRuntime(runCommand, { platform: process.platform, execPath: process.execPath, env, fsModule })]);
+  checks.push(["Projects", checkProjects({ root, fsModule })]);
   checks.push(["Repository", checkRepository({ env, fileValues, root, runCommand, fsModule })]);
   const secrets = checkSecrets({ env, fileValues, envFilePath, fsModule });
   if (dotenvErrors.length && secrets.status !== "FAIL") checks.push(["Secrets", result("FAIL", `malformed .env assignment on line ${dotenvErrors[0].line}`)]);
@@ -246,4 +258,4 @@ if (require.main === module) {
   runDoctor({ skipTests }).then(({ exitCode }) => { process.exitCode = exitCode; }).catch((error) => { console.error(`Doctor failed safely: ${redact(error.message)}`); process.exitCode = 1; });
 }
 
-module.exports = { parseEnvFile, redact, classifySubprocessFailure, resolveNpmInvocation, runNpm, checkRuntime, checkRepository, checkSecrets, checkSlack, checkCodex, checkBrowser, checkTests, runDoctor };
+module.exports = { parseEnvFile, redact, classifySubprocessFailure, resolveNpmInvocation, runNpm, checkRuntime, checkProjects, checkRepository, checkSecrets, checkSlack, checkCodex, checkBrowser, checkTests, runDoctor };

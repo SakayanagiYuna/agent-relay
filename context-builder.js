@@ -15,7 +15,8 @@ const MANDATORY_GUIDANCE = [
   "Do not alter worker-agent configuration or system security settings.",
   "If the task cannot be completed inside the sandbox, stop and explain the required permission.",
   "For write tasks, report changed files and verification; if none changed, say so.",
-  "End the final response with one standalone line: AGENT_RELAY_RESULT: DONE, FAILED, or BLOCKED. Use FAILED when requested acceptance was not completed, even if the Codex process itself can exit normally.",
+  "End the final response with one standalone line: AGENT_RELAY_RESULT: DONE, FAILED, or BLOCKED.",
+  "Use DONE when the requested work completed, including read-only analysis that lists risks or follow-ups. Pre-existing dirty git state is not FAILED if this task made no additional file changes. 'Keep git diff empty' means do not introduce new changes; do not fail solely because the workspace was already dirty. Use FAILED only when the requested work itself could not be completed.",
 ].join("\n");
 
 const CAPABILITY_FRAGMENTS = Object.freeze({

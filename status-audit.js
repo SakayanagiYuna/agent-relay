@@ -9,7 +9,8 @@ function indentBlock(value) {
 function inferTestResult(summary) {
   const text = String(summary || "");
   if (!/\b(?:npm\s+(?:run\s+)?test|node\s+--test|pytest|go\s+test|cargo\s+test)\b/i.test(text)) return null;
-  if (/\b(?:fail(?:ed|ure)?|error)\b/i.test(text)) return "failed";
+  if (/npm\s+(?:run\s+)?test[^\n]{0,80}(?:退出码\s*0|passed|全部回归通过)/i.test(text)) return "passed";
+  if (/npm\s+(?:run\s+)?test[^\n]{0,80}(?:failed|失败|退出码\s*[1-9])/i.test(text)) return "failed";
   if (/\b(?:pass(?:ed)?|success(?:ful|fully)?)\b/i.test(text)) return "passed";
   return "executed; outcome not reported by worker";
 }

@@ -27,6 +27,7 @@ target_worker: <WORKER_ID>
 target_workspace: <WORKSPACE_ID>
 target_repo: <ALLOWLIST_REPO_ID>
 # 可选：agent: codex（默认）或 agent: grok
+# 可选：conversation: continue（默认，续上同一仓库同一 agent 的上一次会话）或 conversation: new
 # 可选 Browser Evidence 字段只能放在这里
 instruction: |
   目标：<任务特有目标>
@@ -34,7 +35,7 @@ instruction: |
   验收：<预期结果与验证方式>
 ```
 
-必填字段为 `schema_version`、`task_id`、`target_worker`、`target_workspace`、`target_repo` 和 `instruction`。`agent` 是可选字段，合法值为 `codex`（默认）和 `grok`；不支持自动选择、fallback 或模型名。`target_repo` 是 allowlist 逻辑名称，不是文件系统路径。不要填写 `cwd`、shell、executable、`--cd`、`--sandbox`、approval、Git trust flags 或本机配置项。
+必填字段为 `schema_version`、`task_id`、`target_worker`、`target_workspace`、`target_repo` 和 `instruction`。`agent` 是可选字段，合法值为 `codex`（默认）和 `grok`；不支持自动选择、fallback 或模型名。`conversation` 是可选字段，合法值为 `continue`（默认）和 `new`。省略或 `continue` 时，Relay 续上该 worker 上同一 `target_workspace` + `target_repo` + `agent` 的上一次会话；换仓库、换 agent，或尚未有会话时自动新开。只有工单写明 `conversation: new` 才强制新对话。不要把 session id 写入工单。`target_repo` 是 allowlist 逻辑名称，不是文件系统路径。不要填写 `cwd`、shell、executable、`--cd`、`--sandbox`、approval、Git trust flags 或本机配置项。
 
 ## 选择 `grok`
 
@@ -44,8 +45,8 @@ instruction: |
 CODEX_TASK
 schema_version: 1
 task_id: TASK-XXX
-target_worker: dev-pc-a
-target_workspace: baiyuan
+target_worker: <WORKER_ID>
+target_workspace: <WORKSPACE_ID>
 target_repo: agent-relay
 agent: grok
 instruction: |
@@ -54,7 +55,11 @@ instruction: |
   验收：报告变更、验证结果和未完成项。
 ```
 
-每张工单使用新的 `task_id`；拒绝、失败或重试都不能复用旧 ID，因为 Relay 会持久化去重状态。
+每张工单使用新的 `task_id`；拒绝、失败或重试都不能复用旧 ID，因为 Relay 会持久化去重状态。默认续上一次同一仓库、同一 agent 的 worker 会话。若要清空上下文，在 `instruction` 前加：
+
+```text
+conversation: new
+```
 
 ## 类型 A：代码或文档修改
 
@@ -62,8 +67,8 @@ instruction: |
 CODEX_TASK
 schema_version: 1
 task_id: TASK-XXX
-target_worker: dev-pc-a
-target_workspace: baiyuan
+target_worker: <WORKER_ID>
+target_workspace: <WORKSPACE_ID>
 target_repo: agent-relay
 instruction: |
   目标：在 listener 中实现 <功能>。
@@ -79,8 +84,8 @@ instruction: |
 CODEX_TASK
 schema_version: 1
 task_id: TASK-XXX
-target_worker: dev-pc-a
-target_workspace: baiyuan
+target_worker: <WORKER_ID>
+target_workspace: <WORKSPACE_ID>
 target_repo: agent-relay
 instruction: |
   目标：诊断 Browser Callback 无法启动的原因。
@@ -98,14 +103,14 @@ instruction: |
 CODEX_TASK
 schema_version: 1
 task_id: TASK-XXX
-target_worker: dev-pc-a
-target_workspace: baiyuan
-target_repo: atelier-of-memory
+target_worker: <WORKER_ID>
+target_workspace: <WORKSPACE_ID>
+target_repo: <ALLOWLIST_REPO_ID>
 browser_evidence: screenshot
 browser_url: http://localhost:5173
 browser_viewport: desktop
 instruction: |
-  目标：验证 Atelier-of-Memory 首页的 desktop Browser Evidence。
+  目标：验证允许列表仓库首页的 desktop Browser Evidence。
   范围：只读；不修改仓库文件或 Agent Relay 配置。
   验收：worker 完成后由 Relay host 截图并上传 Slack；终态应包含 evidence_file_id，且可用时包含 evidence_permalink。
   注意：不要启动或操作浏览器、截图或上传证据；这些由 Relay host 在 worker DONE 后执行。

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agent Relay 控制台</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <button id="toggleSidebar" class="icon-button" type="button" aria-controls="leftRail" aria-expanded="true" title="收起侧栏">
+        <span aria-hidden="true">☰</span>
+        <span class="sr-only">收起侧栏</span>
+      </button>
+      <div class="brand-mark" aria-hidden="true">AR</div>
+      <div class="brand-copy">
+        <strong>Agent Relay</strong>
+        <span>Desktop Console</span>
+      </div>
+    </div>
+
+    <div class="status-tray" aria-label="Relay 全局状态">
+      <div id="relayStatus" class="status-chip" data-state="STOPPED">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-copy"><small>中继</small><strong id="relay">未启动</strong></span>
+      </div>
+      <div id="browserStatus" class="status-chip" data-state="STOPPED">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-copy"><small>浏览器</small><strong id="browser">未检查</strong></span>
+      </div>
+      <div id="callbackStatus" class="status-chip" data-state="DISCONNECTED">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-copy"><small>回调</small><strong id="callback">未连接</strong></span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button data-action="start-browser" id="headerStartBrowser" class="primary">启动浏览器</button>
+      <button id="settings">设置</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside id="leftRail" class="left-rail">
+      <div class="workspace-identity">
+        <div class="workspace-icon" aria-hidden="true">⌁</div>
+        <div>
+          <strong>本地 Relay</strong>
+          <span>agent-relay</span>
+        </div>
+      </div>
+
+      <section class="rail-section">
+        <div class="rail-label">工作区</div>
+        <nav class="rail-nav" aria-label="工作区导航">
+          <a class="active" href="#overview"><span class="nav-icon" aria-hidden="true">▦</span><span>总览</span><span class="nav-arrow" aria-hidden="true">›</span></a>
+          <a href="#taskPanel"><span class="nav-icon" aria-hidden="true">◇</span><span>任务队列</span><span class="nav-arrow" aria-hidden="true">›</span></a>
+          <a href="#browserPanel"><span class="nav-icon" aria-hidden="true">▣</span><span>浏览器</span><span class="nav-arrow" aria-hidden="true">›</span></a>
+          <a href="#diagnostics"><span class="nav-icon" aria-hidden="true">⌘</span><span>诊断日志</span><span class="nav-arrow" aria-hidden="true">›</span></a>
+        </nav>
+      </section>
+
+      <section class="rail-section queue-section">
+        <div class="rail-label">运行队列</div>
+        <div class="queue-card">
+          <span class="queue-icon" aria-hidden="true">↗</span>
+          <div>
+            <strong>Runtime</strong>
+            <span id="queue">运行中 0 · 排队中 0</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="rail-section recent-section">
+        <div class="rail-label">最近任务</div>
+        <div class="recent-card">
+          <span class="recent-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="terminal">暂无终态</strong>
+            <span>最近一次结果</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="rail-footer">
+        <span class="local-dot" aria-hidden="true"></span>
+        <span>仅限本机控制面</span>
+      </div>
+    </aside>
+
+    <section id="overview" class="surface">
+      <div class="surface-tabs" role="tablist" aria-label="工作区域">
+        <button class="surface-tab active" type="button" role="tab" aria-selected="true">浏览器</button>
+        <span class="surface-context">当前 Relay 工作区</span>
+        <span class="surface-context muted">LOCAL</span>
+      </div>
+
+      <section id="taskPanel" class="task-panel" aria-labelledby="taskHeading">
+        <div class="panel-heading compact">
+          <div>
+            <span class="panel-kicker">RUNTIME SNAPSHOT</span>
+            <h1 id="taskHeading">当前任务</h1>
+          </div>
+          <span class="panel-hint">实时状态</span>
+        </div>
+        <div id="task" class="task-strip empty">当前没有任务</div>
+      </section>
+
+      <section id="browserPanel" class="browser-panel" aria-labelledby="browserHeading">
+        <div class="panel-heading">
+          <div>
+            <span class="panel-kicker">BROWSER SURFACE</span>
+            <h2 id="browserHeading">Relay 浏览器</h2>
+          </div>
+          <span id="browserPanelState" class="panel-state" data-state="STOPPED">等待连接</span>
+        </div>
+        <div id="browserHost" class="browser-host">
+          <div class="browser-empty">
+            <div class="browser-glyph" aria-hidden="true">⌁</div>
+            <strong>浏览器工作区域</strong>
+            <p id="browserDetail">Relay 专用 Chrome 将停靠在此区域，并复用已有 profile 登录态。</p>
+            <div class="browser-actions">
+              <button data-action="start-browser" id="restartBrowser" class="primary">启动浏览器</button>
+              <button data-action="focus-browser">聚焦浏览器</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="callback-panel" aria-labelledby="callbackHeading">
+        <div class="panel-heading compact">
+          <div>
+            <span class="panel-kicker">CALLBACK TARGET</span>
+            <h2 id="callbackHeading">连接对话</h2>
+          </div>
+          <span class="panel-hint">一点完成刷新、Bind 与 Arm</span>
+        </div>
+        <div class="callback-row">
+          <select id="pages" aria-label="ChatGPT conversation 列表"><option value="">打开对话后点 Connect Callback</option></select>
+          <button id="connect" class="primary">Connect Callback</button>
+        </div>
+        <p id="callbackMessage" class="callback-message">在 Relay Chrome 打开目标 conversation，然后点 Connect Callback。</p>
+      </section>
+
+      <section id="diagnostics" class="console-terminal" aria-labelledby="terminalHeading">
+        <div class="terminal-head">
+          <div>
+            <span class="terminal-kicker">LOCAL DIAGNOSTICS</span>
+            <strong id="terminalHeading">终端日志</strong>
+          </div>
+          <button data-action="start-listener">启动 Listener</button>
+        </div>
+        <p id="diagnostic"></p>
+        <pre id="consoleLog">等待操作。点击启动按钮后将在此显示脱敏日志。</pre>
+      </section>
+    </section>
+
+    <aside class="right-rail">
+      <div class="right-heading">
+        <div>
+          <span class="panel-kicker">RUNTIME FEED</span>
+          <h2>活动</h2>
+        </div>
+        <span class="live-indicator"><span aria-hidden="true"></span>实时</span>
+      </div>
+      <div class="activity-list">
+        <section class="activity-card current-card">
+          <div class="activity-card-heading"><span class="activity-icon" aria-hidden="true">✦</span><span>当前活动</span></div>
+          <p id="activity">等待 Relay 状态</p>
+          <small>来自 Runtime 的脱敏摘要</small>
+        </section>
+        <section class="activity-card">
+          <div class="activity-card-heading"><span class="activity-icon" aria-hidden="true">◌</span><span>Browser Evidence</span></div>
+          <p id="evidence" data-state="IDLE">IDLE</p>
+          <small>独立 headless capture，不使用可见浏览器。</small>
+        </section>
+        <section class="audit-note">
+          <span class="note-mark" aria-hidden="true">i</span>
+          <p>这里仅显示状态摘要。完整 instruction、日志和审计详情继续保留在 Slack。</p>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span>本机</span>
+    <span class="footer-divider" aria-hidden="true"></span>
+    <span id="worker">工作节点不可用</span>
+    <span class="statusbar-spacer"></span>
+    <span>Agent Relay Console</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

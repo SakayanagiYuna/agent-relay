@@ -27,6 +27,14 @@ const { createUsageCollector, recordUsage } = require("./usage-accounting");
 const { buildStatusText } = require("./status-audit");
 const { resolveWorkerOutcome } = require("./worker-outcome");
 const { extractSlackEvidenceReference } = require("./slack-evidence-reference");
+const { RuntimeObserver } = require("./runtime-observer");
+const { WorkerSessionStore, buildCodexExecArgs, extractWorkerSessionId, resolveResumeSessionId, workerSessionKey } = require("./worker-session");
+const { buildChannelProjects, loadProjectsConfig } = require("./projects-config");
+
+const runtimeObserver = new RuntimeObserver({ workerId: process.env.AGENT_RELAY_WORKER_ID || null });
+function publishRuntimeState() {
+  if (typeof process.send === "function") process.send({ type: "agent-relay:runtime-state", payload: runtimeObserver.snapshot() });
+}
 
 // ============================================================
 // Agent Relay V5.5
@@ -189,10 +197,6 @@ const ALLOWED_USER_ID = requireSlackId("AGENT_RELAY_ALLOWED_USER_ID");
 const CHATGPT_APP_ID = requireSlackId("AGENT_RELAY_CHATGPT_APP_ID");
 
 const CHANNEL_ID = requireSlackId("AGENT_RELAY_CHANNEL_ID");
-const ATELIER_OF_MEMORY_PATH = requireLocalPath(
-  "AGENT_RELAY_ATELIER_OF_MEMORY_PATH"
-);
-const RELAY_PATH = requireLocalPath("AGENT_RELAY_PATH");
 
 const BROWSER_EVIDENCE_ENABLED = process.env.AGENT_RELAY_BROWSER_EVIDENCE_ENABLED === "true";
 if (process.env.AGENT_RELAY_BROWSER_EVIDENCE_ENABLED !== undefined && !["true", "false"].includes(process.env.AGENT_RELAY_BROWSER_EVIDENCE_ENABLED)) {
@@ -247,21 +251,10 @@ if (BROWSER_EVIDENCE_ENABLED) {
 // target_repo is resolved only through this allowlist.
 // ------------------------------------------------------------
 
-const PROJECTS = {
-  [CHANNEL_ID]: {
-    project_id: "baiyuan",
-    workspace_id: "baiyuan",
-
-    repos: {
-      "atelier-of-memory": {
-        local_path: ATELIER_OF_MEMORY_PATH,
-      },
-      "agent-relay": {
-        local_path: RELAY_PATH,
-      },
-    },
-  },
-};
+const PROJECTS = buildChannelProjects({
+  channelId: CHANNEL_ID,
+  config: loadProjectsConfig(),
+});
 
 
 // ------------------------------------------------------------
@@ -359,6 +352,7 @@ const GROK_BIN = process.env.AGENT_RELAY_GROK_BIN
 // ------------------------------------------------------------
 
 const STATE_DIR = path.join(__dirname, "state");
+const workerSessionStore = new WorkerSessionStore({ filePath: path.join(__dirname, ".agent-relay", "worker-sessions.json") });
 
 const SEEN_TASKS_FILE = path.join(
   STATE_DIR,
@@ -437,9 +431,12 @@ const seenTasks = loadSeenTasks();
 let taskQueueTail = Promise.resolve();
 let queuedTaskCount = 0;
 let runningTaskCount = 0;
+let shutdownRequested = null;
+function updateRuntimeQueue() { runtimeObserver.queue({ running: runningTaskCount, queued: queuedTaskCount }); publishRuntimeState(); }
 
 function enqueueTask(taskId, fn) {
   queuedTaskCount += 1;
+  updateRuntimeQueue();
 
   console.log(
     `[QUEUE] task_id=${taskId} waiting=${queuedTaskCount}`
@@ -448,30 +445,38 @@ function enqueueTask(taskId, fn) {
   const run = taskQueueTail.then(
     async () => {
       queuedTaskCount -= 1;
+      updateRuntimeQueue();
 
       console.log(
         `[DEQUEUE] task_id=${taskId} remaining=${queuedTaskCount}`
       );
 
       runningTaskCount += 1;
+      updateRuntimeQueue();
       try {
         return await fn();
       } finally {
         runningTaskCount -= 1;
+        updateRuntimeQueue();
+        if (shutdownRequested === "when-idle" && runningTaskCount === 0 && queuedTaskCount === 0) gracefulShutdown();
       }
     },
     async () => {
       queuedTaskCount -= 1;
+      updateRuntimeQueue();
 
       console.log(
         `[DEQUEUE] task_id=${taskId} remaining=${queuedTaskCount}`
       );
 
       runningTaskCount += 1;
+      updateRuntimeQueue();
       try {
         return await fn();
       } finally {
         runningTaskCount -= 1;
+        updateRuntimeQueue();
+        if (shutdownRequested === "when-idle" && runningTaskCount === 0 && queuedTaskCount === 0) gracefulShutdown();
       }
     }
   );
@@ -490,6 +495,24 @@ const app = new App({
   token: SLACK_BOT_TOKEN,
   appToken: SLACK_APP_TOKEN,
   socketMode: true,
+});
+
+let shuttingDown = false;
+async function gracefulShutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  runtimeObserver.relay("STOPPING"); publishRuntimeState();
+  try { await app.stop(); runtimeObserver.relay("STOPPED"); }
+  catch (error) { runtimeObserver.relay("FAILED"); console.error(`[SHUTDOWN] ${error.message}`); }
+  finally { publishRuntimeState(); }
+}
+process.on("message", (message) => {
+  if (!message || typeof message !== "object") return;
+  if (message.type === "agent-relay:request-state") { publishRuntimeState(); return; }
+  if (message.type === "agent-relay:shutdown" && ["when-idle", "force"].includes(message.mode)) {
+    shutdownRequested = message.mode;
+    if (message.mode === "force" || (runningTaskCount === 0 && queuedTaskCount === 0)) gracefulShutdown();
+  }
 });
 
 
@@ -790,14 +813,17 @@ async function runBrowserEvidence({ channelId, task, route }) {
   // worker prompt or the child process: Playwright must never inherit the
   // Codex execution sandbox.
   console.log(`[EVIDENCE] task_id=${task.task_id} host_pid=${process.pid} Relay host capture starting`);
+  runtimeObserver.evidence("CAPTURING", task.task_id); publishRuntimeState();
   const requests = validateBrowserRequests(task.browser_evidence, BROWSER_ALLOWED_ORIGINS);
   const uploaded = [];
   for (const request of requests) {
     const evidence = await captureBrowserEvidence({ taskId: task.task_id, route, request: { mode: "screenshot", ...request }, config: { allowedOrigins: BROWSER_ALLOWED_ORIGINS, executablePath: BROWSER_EXECUTABLE_PATH || undefined, timeoutMs: BROWSER_EVIDENCE_TIMEOUT_MS } });
+    runtimeObserver.evidence("UPLOADING", task.task_id); publishRuntimeState();
     const reference = await uploadBrowserEvidence({ channelId, task, evidence });
     uploaded.push({ evidence, reference });
   }
   const summary = uploaded.map(({ evidence, reference }) => `Browser evidence uploaded: ${evidence.filename} (file_id: ${reference.fileId}; ${evidence.viewport.name} ${evidence.viewport.width}x${evidence.viewport.height}; ${evidence.url}; console errors: ${evidence.consoleErrorCount}).${evidence.consoleErrors.length ? ` Console errors (bounded): ${evidence.consoleErrors.join(" | ")}` : ""}`).join("\n");
+  runtimeObserver.evidence("UPLOADED", task.task_id); publishRuntimeState();
   return { reference: uploaded[0]?.reference, summary };
 }
 
@@ -1230,6 +1256,7 @@ function looksLikeApprovalBlock(text) {
 async function executeCodexTask({
   task,
   route,
+  resumeSessionId = null,
 }) {
   if (
     process.platform === "win32" &&
@@ -1258,27 +1285,12 @@ async function executeCodexTask({
   // Codex reads prompt from stdin.
   //
   // Therefore task text cannot become shell syntax.
-  const args = [
-    "-c",
-    `windows.sandbox="${CODEX_WINDOWS_SANDBOX}"`,
-
-    "--ask-for-approval",
-    "on-request",
-
-    "exec",
-
-    "--sandbox",
-    CODEX_SANDBOX_MODE,
-
-    "--ephemeral",
-
-    "--json",
-
-    "--cd",
-    route.local_path,
-
-    "-",
-  ];
+  const args = buildCodexExecArgs({
+    resumeSessionId,
+    windowsSandbox: CODEX_WINDOWS_SANDBOX,
+    sandboxMode: CODEX_SANDBOX_MODE,
+    repoPath: route.local_path,
+  });
 
   console.log("");
   console.log(
@@ -1337,6 +1349,7 @@ async function executeCodexTask({
       let stdoutBuffer = "";
 
       const usageCollector = createUsageCollector();
+      let capturedSessionId = resumeSessionId || null;
 
       const agentMessages = [];
 
@@ -1507,6 +1520,7 @@ async function executeCodexTask({
             if (event) {
               printCodexProgress(task.task_id, event);
               usageCollector.observe(event);
+              capturedSessionId = extractWorkerSessionId(event) || capturedSessionId;
 
               if (DEBUG_CODEX_JSON) {
                 debugCodexEvent(event);
@@ -1549,6 +1563,7 @@ async function executeCodexTask({
               summary:
                 `Codex Worker exceeded the configured timeout of ${CODEX_TIMEOUT_MS} ms and was terminated.`,
               usage: usageCollector.usage(),
+              session_id: capturedSessionId,
             });
 
             return;
@@ -1576,7 +1591,7 @@ async function executeCodexTask({
 
             const reportedStatus = resolveWorkerOutcome({ exitCode: code, summary });
             if (reportedStatus !== "DONE") console.error(`[WORKER] task_id=${task.task_id} exit_code=0 overridden_by_reported_status=${reportedStatus}`);
-            resolve({ status: reportedStatus, summary, usage: usageCollector.usage() });
+            resolve({ status: reportedStatus, summary, usage: usageCollector.usage(), session_id: capturedSessionId });
 
             return;
           }
@@ -1618,6 +1633,7 @@ async function executeCodexTask({
                 cleanedDiagnostic ||
                 `Codex could not continue because the requested operation is outside the ${CODEX_SANDBOX_MODE} sandbox.`,
               usage: usageCollector.usage(),
+              session_id: capturedSessionId,
             });
 
             return;
@@ -1640,6 +1656,7 @@ async function executeCodexTask({
                   : ""
               }.`,
               usage: usageCollector.usage(),
+            session_id: capturedSessionId,
           });
         }
       );
@@ -1683,8 +1700,35 @@ async function executeCodexTask({
 // Task lifecycle
 // ------------------------------------------------------------
 
+function persistWorkerSession({ task, route, sessionId }) {
+  const key = workerSessionKey({ agent: task.agent, workspaceId: route.workspace_id, repoId: route.repo_id });
+  if (sessionId) {
+    workerSessionStore.put(key, {
+      agent: task.agent,
+      workspace_id: route.workspace_id,
+      repo_id: route.repo_id,
+      session_id: sessionId,
+      last_task_id: task.task_id,
+    });
+    return;
+  }
+  if (task.conversation === "new") workerSessionStore.clear(key);
+}
+
 async function executeSelectedAgentTask({ task, route }) {
-  if (task.agent === "codex") return executeCodexTask({ task, route });
+  const resumeSessionId = resolveResumeSessionId({
+    conversation: task.conversation,
+    agent: task.agent,
+    workspaceId: route.workspace_id,
+    repoId: route.repo_id,
+    store: workerSessionStore,
+  });
+  console.log(`[SESSION] task_id=${task.task_id} agent=${task.agent} conversation=${task.conversation} resume=${resumeSessionId || "none"}`);
+  if (task.agent === "codex") {
+    const result = await executeCodexTask({ task, route, resumeSessionId });
+    persistWorkerSession({ task, route, sessionId: result.session_id });
+    return result;
+  }
   if (task.agent !== "grok") throw new Error(`Unsupported task agent: ${task.agent}`);
 
   const grokExecutable = GROK_BIN || resolveGrokExecutable();
@@ -1703,12 +1747,14 @@ async function executeSelectedAgentTask({ task, route }) {
   console.log(`[CONTEXT] task_chars=${context.telemetry.taskChars} mandatory_chars=${context.telemetry.mandatoryChars} repo_chars=${context.telemetry.repoChars} capability_chars=${context.telemetry.capabilityChars} final_prompt_chars=${context.telemetry.finalPromptChars} fragments=${context.telemetry.selectedFragments.join(",") || "none"}`);
   let lastProgressAt = 0;
 
-  return executeGrokBuildTask({
+  const result = await executeGrokBuildTask({
     task,
     route,
     executablePath: grokExecutable,
     prompt: context.prompt,
     timeoutMs: CODEX_TIMEOUT_MS,
+    resumeSessionId,
+    extractSessionId: extractWorkerSessionId,
     onProgress: ({ activity, chars }) => {
       const now = Date.now();
       if (activity !== "tool_activity" && activity !== "turn_completed" && now - lastProgressAt < 2_000) return;
@@ -1716,6 +1762,8 @@ async function executeSelectedAgentTask({ task, route }) {
       console.log(`[GROK] task_id=${task.task_id} activity=${activity}${chars ? ` chars=${chars}` : ""}`);
     },
   });
+  persistWorkerSession({ task, route, sessionId: result.session_id });
+  return result;
 }
 
 async function runTaskLifecycle({
@@ -1731,6 +1779,7 @@ async function runTaskLifecycle({
   });
 
   try {
+    runtimeObserver.task({ task_id: task.task_id, agent: task.agent, workspace: route.workspace_id, repo: route.repo_id }, "START"); publishRuntimeState();
     await sendStatus({
       channelId,
 
@@ -1745,6 +1794,7 @@ async function runTaskLifecycle({
     });
 
     const executionContext = execution.start();
+    runtimeObserver.task({ task_id: task.task_id, agent: task.agent, workspace: route.workspace_id, repo: route.repo_id, started_at: executionContext.started_at }, "RUNNING"); publishRuntimeState();
     console.log(`[LIFECYCLE] task_id=${executionContext.task_id} worker_id=${executionContext.worker_id} started_at=${executionContext.started_at} status=${executionContext.current_status}`);
 
 
@@ -1760,6 +1810,7 @@ async function runTaskLifecycle({
         result.summary = `${result.summary}\n\n${evidence.summary}`;
         result.evidenceReference = evidence.reference;
       } catch (error) {
+        runtimeObserver.evidence("FAILED", task.task_id); publishRuntimeState();
         result.status = isSlackFilesScopeError(error) ? "BLOCKED" : "FAILED";
         result.summary = isSlackFilesScopeError(error)
           ? "Browser evidence screenshot was captured locally but Slack artifact upload is blocked. The Slack Bot Token requires the files:write OAuth scope."
@@ -1768,6 +1819,7 @@ async function runTaskLifecycle({
     }
 
     const terminalExecution = execution.stop(result.status);
+    runtimeObserver.terminal({ task: { task_id: task.task_id, agent: task.agent, repo: route.repo_id }, status: result.status, elapsed_ms: terminalExecution.elapsed_ms }); publishRuntimeState();
     const gitAudit = collectGitAudit(route.local_path);
     recordUsage({ stateDir: STATE_DIR, taskId: task.task_id, workerId: WORKER_ID, status: result.status, usage: result.usage });
 
@@ -2230,9 +2282,11 @@ function validateStartup() {
 // ------------------------------------------------------------
 
 (async () => {
+  runtimeObserver.relay("STARTING"); publishRuntimeState();
   validateStartup();
 
   await app.start();
+  runtimeObserver.relay("RUNNING"); publishRuntimeState();
 
   console.log("");
 

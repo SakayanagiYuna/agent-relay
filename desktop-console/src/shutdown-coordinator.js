@@ -1,0 +1,4 @@
+"use strict";
+function needsProtection(state) { return ["START", "RUNNING"].includes(state?.task?.status) || ["CAPTURING", "UPLOADING"].includes(state?.browser_evidence?.state); }
+class ShutdownCoordinator { constructor({ stop, hide } = {}) { this.stop = stop || (async () => {}); this.hide = hide || (() => {}); this.autoExit = false; } async choose(choice) { if (choice === "return") return "return"; if (choice === "when-idle") { this.autoExit = true; this.hide(); return "when-idle"; } if (choice === "force-confirmed") { await this.stop("force"); return "force"; } throw new Error("shutdown_choice_invalid"); } async observe(state) { if (this.autoExit && !needsProtection(state)) { await this.stop("when-idle"); return true; } return false; } }
+module.exports = { needsProtection, ShutdownCoordinator };

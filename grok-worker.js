@@ -57,11 +57,18 @@ function observeGrokStreamEvent({ event, usageCollector, textChunks, onProgress 
   if (event.type !== "available_commands") onProgress?.({ activity: describeGrokActivity(event), chars: typeof event.data === "string" ? event.data.length : 0 });
 }
 
-function executeGrokBuildTask({ task, route, executablePath, prompt, timeoutMs, sandbox = "workspace", onProgress }) {
+function buildGrokArgs({ repoPath, sandbox, promptFilePath, resumeSessionId }) {
+  const args = ["--cwd", repoPath, "--sandbox", sandbox, "--permission-mode", "acceptEdits", "--no-subagents", "--output-format", "streaming-json"];
+  if (resumeSessionId) args.push("--resume", resumeSessionId);
+  args.push("--prompt-file", promptFilePath);
+  return args;
+}
+
+function executeGrokBuildTask({ task, route, executablePath, prompt, timeoutMs, sandbox = "workspace", onProgress, resumeSessionId = null, extractSessionId }) {
   if (!fs.existsSync(route.local_path)) return Promise.reject(new Error(`Repo path does not exist: ${route.local_path}`));
   if (!fs.existsSync(executablePath)) return Promise.reject(new Error(`Grok Build executable not found: ${executablePath}`));
   const promptFile = createPromptFile(prompt);
-  const args = ["--cwd", route.local_path, "--sandbox", sandbox, "--permission-mode", "acceptEdits", "--no-subagents", "--output-format", "streaming-json", "--prompt-file", promptFile.filePath];
+  const args = buildGrokArgs({ repoPath: route.local_path, sandbox, promptFilePath: promptFile.filePath, resumeSessionId });
 
   return new Promise((resolve, reject) => {
     const child = spawn(executablePath, args, { cwd: route.local_path, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } });
@@ -70,6 +77,7 @@ function executeGrokBuildTask({ task, route, executablePath, prompt, timeoutMs, 
     let stdoutBuffer = "";
     const textChunks = [];
     const usageCollector = createUsageCollector();
+    let capturedSessionId = resumeSessionId || null;
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
     child.stdout.on("data", (chunk) => {
@@ -79,7 +87,11 @@ function executeGrokBuildTask({ task, route, executablePath, prompt, timeoutMs, 
       const lines = stdoutBuffer.split(/\r?\n/);
       stdoutBuffer = lines.pop() || "";
       for (const line of lines) {
-        try { observeGrokStreamEvent({ event: JSON.parse(line), usageCollector, textChunks, onProgress }); } catch {}
+        try {
+          const event = JSON.parse(line);
+          observeGrokStreamEvent({ event, usageCollector, textChunks, onProgress });
+          if (extractSessionId) capturedSessionId = extractSessionId(event) || capturedSessionId;
+        } catch {}
       }
     });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
@@ -88,16 +100,20 @@ function executeGrokBuildTask({ task, route, executablePath, prompt, timeoutMs, 
       clearTimeout(timeout);
       removePromptFile(promptFile);
       if (stdoutBuffer.trim()) {
-        try { observeGrokStreamEvent({ event: JSON.parse(stdoutBuffer), usageCollector, textChunks, onProgress }); } catch {}
+        try {
+          const event = JSON.parse(stdoutBuffer);
+          observeGrokStreamEvent({ event, usageCollector, textChunks, onProgress });
+          if (extractSessionId) capturedSessionId = extractSessionId(event) || capturedSessionId;
+        } catch {}
       }
       const usage = usageCollector.usage() || extractGrokUsage(stdout);
-      if (timedOut) return resolve({ status: "FAILED", summary: `Grok Build exceeded the configured timeout of ${timeoutMs} ms and was terminated.`, usage });
+      if (timedOut) return resolve({ status: "FAILED", summary: `Grok Build exceeded the configured timeout of ${timeoutMs} ms and was terminated.`, usage, session_id: capturedSessionId });
       const summary = textChunks.join("").trim() || extractGrokSummary(stdout) || String(stderr || "").trim();
-      if (code === 0) return resolve({ status: resolveWorkerOutcome({ exitCode: code, summary }) || "DONE", summary: summary || `Grok Build completed successfully in ${sandbox} sandbox.`, usage });
+      if (code === 0) return resolve({ status: resolveWorkerOutcome({ exitCode: code, summary }) || "DONE", summary: summary || `Grok Build completed successfully in ${sandbox} sandbox.`, usage, session_id: capturedSessionId });
       const blocked = /permission denied|not permitted|approval|required|sandbox|dontask/i.test(`${stdout}\n${stderr}`);
-      return resolve({ status: blocked ? "BLOCKED" : "FAILED", summary: summary || `Grok Build exited with code ${code}${signal ? ` and signal ${signal}` : ""}.`, usage });
+      return resolve({ status: blocked ? "BLOCKED" : "FAILED", summary: summary || `Grok Build exited with code ${code}${signal ? ` and signal ${signal}` : ""}.`, usage, session_id: capturedSessionId });
     });
   });
 }
 
-module.exports = { createPromptFile, describeGrokActivity, executeGrokBuildTask, extractGrokSummary, extractGrokUsage, observeGrokStreamEvent, removePromptFile };
+module.exports = { buildGrokArgs, createPromptFile, describeGrokActivity, executeGrokBuildTask, extractGrokSummary, extractGrokUsage, observeGrokStreamEvent, removePromptFile };

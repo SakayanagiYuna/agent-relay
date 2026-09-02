@@ -1,12 +1,20 @@
 "use strict";
 const assert = require("assert");
 const http = require("http");
-const { BOUND_NAVIGATION_ORIGINS, CALLBACK_REVIEW_INSTRUCTION, CHANNELS, EVENT_SCHEMA, attachViaPlaywrightCli, cliLaunchSpec, createCallbackServer, createCliContext, extractChatInputRef, extractSnapshotTextboxRef, extractTabs, extractUrls, isAllowedBoundNavigation, isAllowedChatGPTOrigin, npxCliEntrypoint, parseAttachArguments, renderAgentRelayEvent, resolveChatComposer, targetIdentity, validateAttachEndpoint, validateCallback, validateRelayCallbackUrl } = require("./browser-callback");
+const { BOUND_NAVIGATION_ORIGINS, CALLBACK_REVIEW_INSTRUCTION, CHANNELS, EVENT_SCHEMA, attachedPages, attachToExistingBrowser, attachViaPlaywrightCli, cliLaunchSpec, createCallbackServer, createCliContext, extractChatInputRef, extractSnapshotTextboxRef, extractTabs, extractUrls, isAllowedBoundNavigation, isAllowedChatGPTOrigin, isCdpChatGPTPage, npxCliEntrypoint, parseAttachArguments, renderAgentRelayEvent, resolveChatComposer, targetIdentity, validateAttachEndpoint, validateAttachedBrowser, validateCallback, validateRelayCallbackUrl } = require("./browser-callback");
 
 assert.deepStrictEqual(CHANNELS, ["msedge", "chrome"]);
 assert.strictEqual(isAllowedChatGPTOrigin("https://chatgpt.com/c/abc"), true);
+assert.strictEqual(isAllowedChatGPTOrigin("https://chatgpt.com/g/g-p-project/c/conversation"), true);
 assert.strictEqual(isAllowedChatGPTOrigin("https://chatgpt.com.evil.example/c/abc"), false);
 assert.strictEqual(isAllowedChatGPTOrigin("http://chatgpt.com/c/abc"), false);
+assert.strictEqual(isCdpChatGPTPage({ type: "page", url: "https://chatgpt.com/g/g-p-project/c/conversation" }), true);
+assert.strictEqual(isCdpChatGPTPage({ type: "browser_ui", url: "https://chatgpt.com/c/abc" }), false);
+const firstContextPage = { url: () => "about:blank" };
+const chatgptContextPage = { url: () => "https://chatgpt.com/c/live" };
+const multiContextBrowser = { contexts: () => [{ pages: () => [firstContextPage] }, { pages: () => [chatgptContextPage] }] };
+assert.deepStrictEqual(attachedPages(multiContextBrowser).map((page) => page.url()), ["about:blank", "https://chatgpt.com/c/live"]);
+assert.deepStrictEqual(validateAttachedBrowser(multiContextBrowser).pages().map((page) => page.url()), ["about:blank", "https://chatgpt.com/c/live"]);
 assert.strictEqual(isAllowedBoundNavigation("https://auth.openai.com/u/login"), false);
 assert.ok(BOUND_NAVIGATION_ORIGINS.includes("https://chatgpt.com"));
 assert.strictEqual(targetIdentity("https://chatgpt.com/c/abc?oai-dm=1"), "https://chatgpt.com/c/abc");
@@ -121,6 +129,51 @@ function request(relay, method, route, body) { return new Promise((resolve, reje
     assert.strictEqual(result.body.armed, false);
     result = await request(relay, "POST", "/api/send");
     assert.strictEqual(result.body.error, "send_guard_blocked");
+  } finally { await relay.close(); }
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+
+;(async () => {
+  let pages = [{ url: () => "about:blank" }];
+  let connectCount = 0;
+  let closeCount = 0;
+  const fakeBrowser = {
+    contexts: () => [{ pages: () => pages }],
+    close: async () => { closeCount += 1; },
+  };
+  const attached = await attachToExistingBrowser({
+    chromium: {
+      connectOverCDP: async () => {
+        connectCount += 1;
+        pages = connectCount === 1
+          ? [{ url: () => "about:blank" }]
+          : [{ url: () => "https://chatgpt.com/g/g-p-project/c/conversation" }];
+        return fakeBrowser;
+      },
+    },
+    endpoint: "http://127.0.0.1:9333/",
+    listTargets: async () => [{ type: "page", url: "https://chatgpt.com/g/g-p-project/c/conversation" }],
+    now: () => 1_000,
+    wait: async () => {},
+  });
+  assert.strictEqual(connectCount, 1);
+  assert.deepStrictEqual(attached.context.pages().map((page) => page.url()), ["about:blank"]);
+  await attached.refresh();
+  assert.strictEqual(closeCount, 1);
+  assert.strictEqual(connectCount, 2);
+  assert.deepStrictEqual(attached.context.pages().map((page) => page.url()), ["https://chatgpt.com/g/g-p-project/c/conversation"]);
+  await attached.refresh();
+  assert.strictEqual(connectCount, 2, "refresh must not reconnect when Playwright already sees ChatGPT");
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+
+;(async () => {
+  let refreshed = 0;
+  const page = { url: () => "https://chatgpt.com/c/target", title: async () => "Conversation", route: async () => {}, on() {} };
+  const relay = createCallbackServer({ context: { pages: () => [page] }, refresh: async () => { refreshed += 1; }, port: 0 });
+  await relay.listen();
+  try {
+    const result = await request(relay, "POST", "/api/bind-arm-configure", { page_id: 1 });
+    assert.strictEqual(result.status, 200);
+    assert.ok(refreshed >= 1, "bind-arm-configure must refresh Playwright pages before listing");
   } finally { await relay.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 

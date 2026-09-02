@@ -15,7 +15,7 @@ const {
   runDoctor,
 } = require("./doctor");
 
-const malformed = parseEnvFile("AGENT_RELAY_PATH=C:\\relay SLACK_BOT_TOKEN=xoxb-secret\n");
+const malformed = parseEnvFile("AGENT_RELAY_WORKER_ID=worker SLACK_BOT_TOKEN=xoxb-secret\n");
 assert.strictEqual(malformed.errors.length, 1, "detects concatenated dotenv assignments");
 assert.match(malformed.errors[0].reason, /SLACK_BOT_TOKEN/);
 assert.doesNotMatch(redact("Slack rejected xoxb-super-secret-token"), /super-secret/);
@@ -54,8 +54,6 @@ const complete = {
   AGENT_RELAY_ALLOWED_USER_ID: "U123",
   AGENT_RELAY_CHATGPT_APP_ID: "A123",
   AGENT_RELAY_CHANNEL_ID: "C123",
-  AGENT_RELAY_ATELIER_OF_MEMORY_PATH: "C:\\atelier",
-  AGENT_RELAY_PATH: "C:\\relay",
   SLACK_BOT_TOKEN: "xoxb-secret",
   SLACK_APP_TOKEN: "xapp-secret",
 };
@@ -81,7 +79,9 @@ assert.match(codexResult.detail, /override/);
     fsModule: {
       existsSync: (candidate) => !String(candidate).endsWith(`${path.sep}.env`) && !String(candidate).endsWith("\\.env"),
       statSync: () => ({ isFile: () => true }),
-      readFileSync: () => "",
+      readFileSync: (candidate) => String(candidate).endsWith("projects.json")
+        ? JSON.stringify({ schema_version: 1, workspace_id: "workspace-1", repos: { "example-app": { local_path: "C:\\src\\example-app" } } })
+        : "",
     },
     runCommand: (_command, args) => {
       if (args.includes("--version")) return { status: 0, stdout: "v20", stderr: "" };
