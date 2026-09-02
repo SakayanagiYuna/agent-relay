@@ -118,6 +118,32 @@ button, select {
   background: var(--console-surface);
   color: var(--console-text);
 }
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: 34px;
+  padding-right: 30px;
+  background: var(--console-panel-muted);
+}
+.select-wrap {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -5px;
+  border-right: 1.5px solid var(--console-muted);
+  border-bottom: 1.5px solid var(--console-muted);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
 button:hover, select:hover { border-color: light-dark(rgba(47,111,189,.38), rgba(174,199,232,.32)) }
 button.primary { background: var(--console-primary); color: #fff; border-color: transparent }
 button.primary:hover { background: light-dark(#285f9f, #5b91d1) }
@@ -194,41 +220,35 @@ body.sidebar-collapsed .left-rail {
 .local-dot { background: var(--console-success) }
 
 .surface {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 0 18px 16px;
-  overflow: auto;
-  background: var(--console-bg);
+  padding: 0;
+  overflow: hidden;
+  background: #0b1018;
 }
-.surface-tabs {
+.task-panel, .callback-panel, .agent-panel {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 50px;
-  border-bottom: 1px solid var(--console-border);
-}
-.surface-tab { border: 0; border-bottom: 2px solid var(--console-primary); border-radius: 0; padding: 15px 8px 12px; background: transparent; color: var(--console-primary); font-weight: 650 }
-.surface-context { color: var(--console-text); font-size: 12px }
-.surface-context.muted { margin-left: auto; color: var(--console-muted); font: 10px ui-monospace, Consolas, monospace }
-.task-panel, .browser-panel, .callback-panel, .console-terminal {
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 13px 11px;
   border: 1px solid var(--console-border);
   border-radius: 11px;
   overflow: hidden;
   background: var(--console-panel);
 }
-.task-panel {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: minmax(155px, auto) minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-  padding: 10px 14px;
-}
-.task-panel .panel-heading.compact { padding: 0; align-items: center }
-.task-panel .panel-heading.compact > div { display: flex; align-items: baseline; gap: 8px }
-.task-panel .panel-heading.compact h1 { margin: 0; font-size: 13px }
-.task-panel .panel-heading.compact .panel-hint { display: none }
+.task-panel .panel-heading.compact,
+.callback-panel .panel-heading.compact,
+.agent-panel .panel-heading.compact { padding: 0; align-items: center }
+.task-panel .panel-heading.compact > div,
+.callback-panel .panel-heading.compact > div,
+.agent-panel .panel-heading.compact > div { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap }
+.task-panel .panel-heading.compact h2,
+.callback-panel .panel-heading.compact h2,
+.agent-panel .panel-heading.compact h2 { margin: 0; font-size: 13px }
+.task-panel .panel-heading.compact .panel-hint,
+.callback-panel .panel-heading.compact .panel-hint,
+.agent-panel .panel-heading.compact .panel-hint { display: none }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px 11px }
 .panel-heading.compact { padding: 0 0 8px }
 .panel-heading h1, .panel-heading h2, .right-heading h2 { margin: 3px 0 0; font-size: 14px; letter-spacing: -.01em }
@@ -236,7 +256,7 @@ body.sidebar-collapsed .left-rail {
 .task-strip {
   min-height: 37px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   padding: 9px 11px;
   border: 1px solid var(--console-border);
   border-radius: 8px;
@@ -244,12 +264,19 @@ body.sidebar-collapsed .left-rail {
   color: var(--console-text);
   font: 11px/1.5 ui-monospace, Consolas, monospace;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .task-strip.empty { color: var(--console-muted) }
-.browser-panel { flex: 1 1 520px; min-height: 480px; display: flex; flex-direction: column }
-.browser-panel .panel-heading { flex: 0 0 auto }
+.browser-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  background: transparent;
+}
 .panel-state { padding: 4px 8px; border-radius: 999px; background: var(--console-panel-muted); color: var(--console-muted); font: 10px ui-monospace, Consolas, monospace }
 .panel-state[data-state="CONNECTED"] { background: light-dark(#e5f6f0, #1c382f); color: var(--console-success) }
 .panel-state[data-state="STARTING"] { background: light-dark(#fff5dd, #3b301b); color: var(--console-warning) }
@@ -257,14 +284,14 @@ body.sidebar-collapsed .left-rail {
 .browser-host {
   position: relative;
   flex: 1 1 auto;
-  min-height: 220px;
+  min-height: 0;
   display: flex;
   justify-content: center;
   align-items: center;
   padding: 18px;
-  margin: 0 10px 10px;
-  border: 1px solid var(--console-border);
-  border-radius: 8px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
   background: var(--console-panel-muted);
   color: var(--console-muted);
   overflow: hidden;
@@ -274,46 +301,60 @@ body.sidebar-collapsed .left-rail {
 .browser-empty strong { color: var(--console-text); font-size: 13px }
 .browser-empty p { max-width: 330px; margin: 0; color: var(--console-muted); font-size: 11px }
 .browser-actions { display: flex; gap: 8px; margin-top: 5px }
-.browser-host.connected { background: #0b1018; border-color: rgba(174,199,232,.14) }
+.browser-host.connected { background: #0b1018 }
 .browser-host.connected .browser-empty { opacity: 0; pointer-events: none }
-.callback-panel {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: minmax(155px, .34fr) minmax(0, 1fr);
-  align-items: center;
-  column-gap: 14px;
-  padding: 10px 14px 9px;
-}
-.callback-panel .panel-heading.compact { align-items: center; padding: 0 }
-.callback-panel .panel-heading.compact > div { display: flex; align-items: baseline; gap: 8px }
-.callback-panel .panel-heading.compact h2 { margin: 0; font-size: 13px }
-.callback-panel .panel-heading.compact .panel-hint { display: none }
-.callback-row { display: flex; align-items: center; gap: 8px }
-.callback-row select { min-width: 140px; flex: 1; background: var(--console-panel-muted) }
-.callback-message { grid-column: 2; min-height: 14px; margin: 4px 0 0; color: var(--console-muted); font-size: 10px }
+.callback-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px }
+.callback-message { min-height: 14px; margin: 0; color: var(--console-muted); font-size: 10px }
 
+.terminal-overlay-body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #10151d;
+}
 .console-terminal {
-  flex: 0 0 176px;
   display: flex;
   flex-direction: column;
-  min-height: 150px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(174,199,232,.18);
+  border-radius: 12px;
   background: #10151d;
   color: #d9e4f2;
-  border-color: rgba(174,199,232,.14);
 }
-.terminal-head { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-bottom: 1px solid rgba(174,199,232,.14) }
-.terminal-head > div { display: grid; gap: 2px }
+.terminal-head { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 10px; flex: 0 0 auto; border-bottom: 1px solid rgba(174,199,232,.14) }
+.terminal-head > div { display: grid; gap: 2px; min-width: 0 }
 .terminal-head strong { color: #edf4ff; font-size: 12px; font-weight: 600 }
 .terminal-kicker { color: #8193a8; font-size: 9px }
-.terminal-head button { margin-left: auto; padding: 5px 9px; background: #1c2735; border-color: rgba(174,199,232,.14); color: #d9e4f2; font-size: 11px }
+.terminal-toggle {
+  width: 28px;
+  height: 28px;
+  color: #d9e4f2;
+  border-color: transparent;
+  background: #1c2735;
+}
+.terminal-toggle span[aria-hidden="true"] { display: block; font-size: 16px; line-height: 1; transform: translateY(-1px) }
+body.terminal-collapsed .terminal-toggle span[aria-hidden="true"] { transform: rotate(-180deg) }
+.terminal-head button[data-action] { margin-left: auto; padding: 5px 9px; background: #1c2735; border-color: rgba(174,199,232,.14); color: #d9e4f2; font-size: 11px }
 #diagnostic { min-height: 17px; margin: 0; padding: 6px 13px 0; color: #9eabba; font: 10px ui-monospace, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 #consoleLog { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; padding: 7px 13px 12px; color: #d9e4f2; white-space: pre-wrap; font: 11px/1.55 ui-monospace, Consolas, monospace }
+body.terminal-collapsed .terminal-head { border-bottom: 0 }
+body.terminal-collapsed .terminal-kicker { display: none }
+body.terminal-collapsed .terminal-head > div { display: block }
+body.terminal-collapsed #diagnostic,
+body.terminal-collapsed #consoleLog { display: none }
 
-.right-rail { display: flex; flex-direction: column; overflow: auto; background: var(--console-surface); border-left: 1px solid var(--console-border) }
-.right-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 20px 16px 15px; border-bottom: 1px solid var(--console-border) }
+.right-rail { display: flex; flex-direction: column; overflow: hidden; background: var(--console-surface); border-left: 1px solid var(--console-border) }
+.right-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 20px 16px 15px; flex: 0 0 auto; border-bottom: 1px solid var(--console-border) }
+.right-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding: 14px }
+.right-scroll .task-panel,
+.right-scroll .callback-panel,
+.right-scroll .agent-panel { flex: 0 0 auto }
 .live-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border-radius: 999px; background: var(--console-primary-soft); color: var(--console-primary); font-size: 10px }
 .live-indicator span { width: 6px; height: 6px; background: var(--console-success) }
-.activity-list { display: grid; align-content: start; gap: 10px; padding: 15px 14px }
+.activity-list { display: grid; align-content: start; gap: 10px }
 .activity-card { padding: 13px; border: 1px solid var(--console-border); border-radius: 10px; background: var(--console-panel-muted) }
 .activity-card.current-card { background: var(--console-primary-soft); border-color: light-dark(rgba(47,111,189,.14), rgba(174,199,232,.14)) }
 .activity-card-heading { display: flex; align-items: center; gap: 7px; color: var(--console-muted); font-size: 11px; font-weight: 600 }
@@ -331,11 +372,10 @@ body.sidebar-collapsed .left-rail {
 .statusbar-spacer { flex: 1 }
 
 @media (max-width: 1180px) {
-  :root { --left-rail: 212px; --right-rail: 290px }
+  :root { --left-rail: 212px; --right-rail: 300px }
   .topbar { gap: 12px; padding-inline: 14px }
   .brand-block { min-width: 190px }
   .status-chip { min-width: 94px; padding-inline: 8px }
-  .surface { padding-inline: 12px }
 }
 @media (max-width: 900px) {
   body { overflow: auto }
@@ -344,7 +384,7 @@ body.sidebar-collapsed .left-rail {
   .status-chip { flex: 1 0 110px }
   .workspace { grid-template-columns: 1fr; overflow: visible }
   .left-rail { max-height: 260px; border-right: 0; border-bottom: 1px solid var(--console-border) }
-  .surface { min-height: 820px; border-bottom: 1px solid var(--console-border) }
+  .surface { min-height: 640px; border-bottom: 1px solid var(--console-border) }
   .right-rail { min-height: 300px; border-left: 0 }
   .right-heading { padding-top: 16px }
   .activity-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -355,15 +395,8 @@ body.sidebar-collapsed .left-rail {
   .brand-block { min-width: 0; flex: 1 }
   .header-actions { width: 100%; margin-left: 42px }
   .header-actions button { flex: 1 }
-  .surface { padding-inline: 9px; min-height: 850px }
-  .surface-context { display: none }
-  .task-panel { display: block; padding: 12px 14px }
-  .task-panel .panel-heading.compact { padding-bottom: 8px }
-  .callback-panel { display: block; padding: 12px 14px 11px }
-  .callback-panel .panel-heading.compact { padding-bottom: 8px }
-  .callback-row { align-items: stretch; flex-direction: column }
-  .callback-row select, .callback-row button { width: 100% }
-  .console-terminal { flex-basis: 245px }
+  .surface { min-height: 560px }
+
   .activity-list { grid-template-columns: 1fr }
   .audit-note { grid-column: auto }
 }

@@ -2,7 +2,10 @@
 const assert = require("assert"); const { validateAction, runtimeState, validateSurfaceRect } = require("../src/ipc-contract");
 assert.deepStrictEqual(validateAction({ type: "start-listener" }), { type: "start-listener" }); assert.throws(() => validateAction({ type: "shell", command: "x" })); assert.throws(() => validateAction({ type: "connect-callback", page_id: "1" }));
 assert.throws(() => validateAction({ type: "connect-callback", page_id: 0 }));
-assert.deepStrictEqual(validateAction({ type: "connect-callback" }), { type: "connect-callback" }); assert.throws(() => runtimeState({}));
+assert.deepStrictEqual(validateAction({ type: "connect-callback" }), { type: "connect-callback" });
+assert.deepStrictEqual(validateAction({ type: "set-default-agent", agent: "grok" }), { type: "set-default-agent", agent: "grok" });
+assert.throws(() => validateAction({ type: "set-default-agent", agent: "claude" }));
+assert.throws(() => runtimeState({}));
 assert.deepStrictEqual(validateSurfaceRect({ x: 1, y: 2, width: 3, height: 4 }), { x: 1, y: 2, width: 3, height: 4 });
 assert.throws(() => validateSurfaceRect({ x: 1, y: 2, width: -1, height: 4 }));
 console.log("ipc-contract regression: passed");

@@ -4,7 +4,7 @@
 
 本版本相对 V5.6 的完整变更如下：
 
-- 协议：`CODEX_TASK` 与 `CODEX_STATUS` 名称、schema version `1` 和任务必填字段保持不变。可选 `agent` 扩展字段省略时固定为 `codex`，也可显式为 `grok`（底层为 Grok Build CLI）；不做自动选择或失败 fallback。可选 `conversation` 扩展字段省略时为 `continue`，同一 worker 上相同 workspace/repo/agent 的后续工单续上一次会话；仅 `conversation: new` 强制新开。parser 在拒绝时记录可解析的 `task_id`、`stage=schema_validation`、更细的 parse stage、recognized fields 与 reason；该提取仅用于审计，不能放宽接收 schema，拒绝工单仍可按编号追踪。
+- 协议：`CODEX_TASK` 与 `CODEX_STATUS` 名称、schema version `1` 和任务必填字段保持不变。可选 `agent` 扩展字段可显式为 `codex` 或 `grok`（底层为 Grok Build CLI）；省略时使用本机 `.env` 的 `AGENT_RELAY_DEFAULT_AGENT`（Desktop Console 右栏可改，启动时从 `.env` 校准），未配置则为 `codex`。不做自动选择或失败 fallback。可选 `conversation` 扩展字段省略时为 `continue`，同一 worker 上相同 workspace/repo/agent 的后续工单续上一次会话；仅 `conversation: new` 强制新开。parser 在拒绝时记录可解析的 `task_id`、`stage=schema_validation`、更细的 parse stage、recognized fields 与 reason；该提取仅用于审计，不能放宽接收 schema，拒绝工单仍可按编号追踪。
 - 生命周期：新增显式 execution state 模块，状态仅允许 `START -> RUNNING -> DONE | FAILED | BLOCKED`。heartbeat 每 30 秒更新本机 context，在 debug 终端/log 中输出，既不发布 Slack `RUNNING`，也不触发 Browser Callback。
 - Slack 审计：终态 `CODEX_STATUS` 统一输出 duration、Git commit、changed files、diff summary 与可识别的 test result；`DONE` 使用 summary，`FAILED`/`BLOCKED` 使用 reason。完整 stdout、stderr、diff 和 heartbeat 继续不进入 Slack。
 - 终态分发：`task_terminal` event 在 Slack 终态成功后由 Browser Callback 和 Human Notification 并行独立消费。Browser 或通知失败只留下本机 `BROWSER_CALLBACK_FAILED` / `HUMAN_NOTIFY_FAILED`，不修改 Slack 事实状态。
@@ -18,7 +18,7 @@
 Agent Relay 将 ChatGPT/人工规划与本地受控执行分离：
 
 ```text
-ChatGPT / human -> CODEX_TASK -> Slack -> Agent Relay -> Codex (default) / Grok Build (selected) -> allowlisted local repo
+ChatGPT / human -> CODEX_TASK -> Slack -> Agent Relay -> ticket agent, else host default, else Codex -> allowlisted local repo
                                       <- CODEX_STATUS START / DONE / BLOCKED / FAILED
 Relay local debug terminal/log       <- HEARTBEAT（每 30 秒）
                                       -> terminal fan-out -> optional loopback Browser Callback -> bound ChatGPT conversation

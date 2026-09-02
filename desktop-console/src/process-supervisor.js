@@ -33,6 +33,7 @@ class ProcessSupervisor {
     browserStatusFn = browserStatus,
     requestJsonFn = requestJson,
     browserReadyTimeoutMs = 8_000,
+    callbackReadyTimeoutMs,
     resolveProfileFn = resolveConsoleProfilePath,
     profileLockFn = profileLockExists,
     loadEnvFn = loadLocalEnvironment,
@@ -47,6 +48,7 @@ class ProcessSupervisor {
     this.browserStatusFn = browserStatusFn;
     this.requestJsonFn = requestJsonFn;
     this.browserReadyTimeoutMs = browserReadyTimeoutMs;
+    this.callbackReadyTimeoutMs = callbackReadyTimeoutMs ?? browserReadyTimeoutMs;
     this.resolveProfileFn = resolveProfileFn;
     this.profileLockFn = profileLockFn;
     this.loadEnvFn = loadEnvFn;
@@ -146,16 +148,36 @@ class ProcessSupervisor {
     return result;
   }
 
+  async waitForCallbackReady(timeoutMs = this.callbackReadyTimeoutMs) {
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+    while (true) {
+      try {
+        await this.requestJsonFn({ path: "/api/state" });
+        return true;
+      } catch {
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+  }
+
   async startCallback() {
-    if (isAlive(this.callback)) return { started: false, message: "Browser Callback 已在运行。" };
-    try {
-      await this.requestJsonFn({ path: "/api/state" });
+    if (isAlive(this.callback)) {
+      if (await this.waitForCallbackReady()) {
+        this.onComponent({ component: "browser-callback", state: "CONNECTED" });
+        const running = { started: false, message: "Browser Callback 已在运行。" };
+        this.log("console", `${running.message}\n`);
+        return running;
+      }
+      const pending = { started: false, message: "Browser Callback 进程在运行，但 8787 尚未就绪。" };
+      this.log("console", `${pending.message}\n`);
+      return pending;
+    }
+    if (await this.waitForCallbackReady(0)) {
       this.onComponent({ component: "browser-callback", state: "CONNECTED" });
       const reused = { started: false, message: "Browser Callback 已连接。" };
       this.log("console", `${reused.message}\n`);
       return reused;
-    } catch {
-      // Port 8787 is free or not serving the callback controller yet.
     }
     const browser = await this.browserStatusFn({ repoRoot: this.repoRoot });
     if (browser.state !== "CONNECTED") {
@@ -169,7 +191,9 @@ class ProcessSupervisor {
     this.observeOutput("browser-callback", this.callback);
     this.log("console", "启动 Browser Callback：node browser-callback.js runtime\n");
     this.callback.on("exit", (code, signal) => this.onComponent({ component: "browser-callback", state: "EXITED", code, signal }));
-    const started = { started: true, message: "Browser Callback 正在启动。" };
+    const ready = await this.waitForCallbackReady();
+    this.onComponent({ component: "browser-callback", state: ready ? "CONNECTED" : "DEGRADED" });
+    const started = { started: true, message: ready ? "Browser Callback 已启动。" : "Browser Callback 已尝试启动，但 8787 尚未就绪。" };
     this.log("console", `${started.message}\n`);
     return started;
   }

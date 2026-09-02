@@ -13,6 +13,7 @@ const {
 } = require("./browser-evidence");
 const { validateRelayCallbackUrl } = require("./browser-callback");
 const { extractCodexTaskId, normalizeSlackText, parseCodexTask } = require("./task-parser");
+const { loadDefaultAgent } = require("./local-preferences");
 const { buildContext } = require("./context-builder");
 const { resolveCodexExecutable } = require("./codex-discovery");
 const { resolveGrokExecutable } = require("./grok-discovery");
@@ -1986,7 +1987,8 @@ app.event(
       try {
         task =
           parseCodexTask(
-            normalizedText
+            normalizedText,
+            { defaultAgent: loadDefaultAgent() }
           );
       } catch (error) {
         const parseStage = error.parseStage || "unknown";

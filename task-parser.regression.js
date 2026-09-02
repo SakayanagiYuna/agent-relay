@@ -50,7 +50,14 @@ function getParseError(text) {
 
 assert.strictEqual(parseCodexTask(validTask).task_id, "TASK-SCHEMA-001");
 assert.strictEqual(parseCodexTask(validTask).agent, "codex", "agent defaults to codex for existing tasks");
+assert.strictEqual(parseCodexTask(validTask, { defaultAgent: "grok" }).agent, "grok", "omitted agent uses host default");
 assert.strictEqual(parseCodexTask(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nagent: grok")).agent, "grok");
+assert.strictEqual(
+  parseCodexTask(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nagent: codex"), { defaultAgent: "grok" }).agent,
+  "codex",
+  "explicit ticket agent wins over host default"
+);
+assert.throws(() => parseCodexTask(validTask, { defaultAgent: "claude" }), /unsupported_default_agent/);
 assert.strictEqual(parseCodexTask(validTask).conversation, "continue", "conversation defaults to continue");
 assert.strictEqual(parseCodexTask(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nconversation: new")).conversation, "new");
 const unsupportedConversationError = getParseError(validTask.replace("target_repo: agent-relay", "target_repo: agent-relay\nconversation: fork"));

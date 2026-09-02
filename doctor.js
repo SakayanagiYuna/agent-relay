@@ -7,6 +7,7 @@ const { discoverCodexExecutable } = require("./codex-discovery");
 const { parseLoopbackUrl, resolveBrowserExecutablePath } = require("./browser-evidence");
 const { validateRelayCallbackUrl } = require("./browser-callback");
 const { configuredRepoPaths, loadProjectsConfig } = require("./projects-config");
+const { loadLocalPreferences } = require("./local-preferences");
 
 const ROOT = __dirname;
 const REQUIRED_KEYS = [
@@ -115,6 +116,20 @@ function checkRuntime(runCommand = run, options = {}) {
     return result("FAIL", `Node/npm version check failed${failure ? `: ${failure}` : ""}`);
   }
   return result("PASS", `Node ${String(node.stdout).trim()}, npm ${String(npm.stdout).trim()}`);
+}
+
+function checkLocalPreferences({ root = ROOT, env = process.env, fsModule = fs } = {}) {
+  const prefs = loadLocalPreferences({
+    envPath: path.join(root, ".env"),
+    fsModule,
+    environment: env,
+  });
+  if (prefs.fileStatus === "invalid") {
+    return result("WARN", `AGENT_RELAY_DEFAULT_AGENT in .env is invalid; omitted CODEX_TASK agent uses ${prefs.default_agent}`);
+  }
+  if (prefs.source === "env-file") return result("PASS", `omitted CODEX_TASK agent uses .env AGENT_RELAY_DEFAULT_AGENT=${prefs.default_agent}`);
+  if (prefs.source === "env") return result("PASS", `omitted CODEX_TASK agent uses process AGENT_RELAY_DEFAULT_AGENT=${prefs.default_agent}`);
+  return result("PASS", "omitted CODEX_TASK agent uses built-in codex");
 }
 
 function checkProjects({ root = ROOT, fsModule = fs } = {}) {
@@ -238,6 +253,7 @@ async function runDoctor({ env = process.env, root = ROOT, runCommand = run, fsM
   const checks = [];
   checks.push(["Runtime", checkRuntime(runCommand, { platform: process.platform, execPath: process.execPath, env, fsModule })]);
   checks.push(["Projects", checkProjects({ root, fsModule })]);
+  checks.push(["Default agent", checkLocalPreferences({ root, env, fsModule })]);
   checks.push(["Repository", checkRepository({ env, fileValues, root, runCommand, fsModule })]);
   const secrets = checkSecrets({ env, fileValues, envFilePath, fsModule });
   if (dotenvErrors.length && secrets.status !== "FAIL") checks.push(["Secrets", result("FAIL", `malformed .env assignment on line ${dotenvErrors[0].line}`)]);
@@ -258,4 +274,4 @@ if (require.main === module) {
   runDoctor({ skipTests }).then(({ exitCode }) => { process.exitCode = exitCode; }).catch((error) => { console.error(`Doctor failed safely: ${redact(error.message)}`); process.exitCode = 1; });
 }
 
-module.exports = { parseEnvFile, redact, classifySubprocessFailure, resolveNpmInvocation, runNpm, checkRuntime, checkProjects, checkRepository, checkSecrets, checkSlack, checkCodex, checkBrowser, checkTests, runDoctor };
+module.exports = { parseEnvFile, redact, classifySubprocessFailure, resolveNpmInvocation, runNpm, checkRuntime, checkProjects, checkLocalPreferences, checkRepository, checkSecrets, checkSlack, checkCodex, checkBrowser, checkTests, runDoctor };

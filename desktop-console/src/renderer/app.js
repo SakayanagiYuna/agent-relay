@@ -60,6 +60,7 @@ function render(state) {
   $("restartBrowser").disabled = connected;
   $("headerStartBrowser").textContent = startLabel;
   $("headerStartBrowser").disabled = connected;
+  if (state.default_agent && $("defaultAgent")) $("defaultAgent").value = state.default_agent;
   reportSurface();
 }
 
@@ -93,6 +94,7 @@ function actionErrorMessage(error) {
   if (text === "callback_no_chatgpt_conversation") return "没有可绑定的 ChatGPT 对话。请确认中间 Relay Chrome 已打开 chatgpt.com 的 conversation。";
   if (text === "console_page_id_invalid") return "请先明确选择一个 conversation。";
   if (text === "callback_not_armed_after_readback") return "Bind 后回读未确认 ARMED，未写入成功状态。";
+  if (text === "callback_unavailable" || /ECONNREFUSED/.test(text)) return "回调控制器未连接。请先启动浏览器，等待 Callback 就绪后再选对话。";
   return text;
 }
 
@@ -101,6 +103,13 @@ async function refreshCallback() {
     const state = await window.relayConsole.action({ type: "request-state" });
     render(state);
     const callbackState = await window.relayConsole.action({ type: "callback-state" });
+    if (callbackState?.available === false || callbackState?.error === "callback_unavailable") {
+      fillPageOptions([]);
+      $("callback").textContent = "未连接";
+      setState("callbackStatus", "DISCONNECTED");
+      $("callbackMessage").textContent = "回调控制器未连接。请先启动浏览器，等待 Callback 就绪后再选对话。";
+      return;
+    }
     fillPageOptions(callbackState.pages || []);
     const callbackStateLabel = callbackState.armed ? "ARMED" : callbackState.bound ? "BOUND" : "DISCONNECTED";
     $("callback").textContent = callbackStateLabel;
@@ -119,15 +128,31 @@ async function refreshCallback() {
 document.querySelectorAll("[data-action]").forEach((button) => {
   button.onclick = async () => {
     const result = await window.relayConsole.action({ type: button.dataset.action });
-    if (result?.message) $("diagnostic").textContent = result.message;
+    if (result?.message) window.relayConsole.note(result.message);
     refreshCallback();
   };
 });
+
+$("defaultAgent").onchange = async () => {
+  const agent = $("defaultAgent").value;
+  try {
+    const result = await window.relayConsole.action({ type: "set-default-agent", agent });
+    if (result?.default_agent) $("defaultAgent").value = result.default_agent;
+    $("defaultAgentMessage").textContent = result?.message || `本机默认 agent 已设为 ${agent}。`;
+    if (result?.message) window.relayConsole.note(result.message);
+  } catch (error) {
+    $("defaultAgentMessage").textContent = `未能保存默认 agent：${actionErrorMessage(error)}`;
+  }
+};
 
 $("connect").onclick = async () => {
   $("callbackMessage").textContent = "正在刷新对话并连接…";
   try {
     const callbackState = await window.relayConsole.action({ type: "callback-state" });
+    if (callbackState?.available === false || callbackState?.error === "callback_unavailable") {
+      $("callbackMessage").textContent = actionErrorMessage({ message: "callback_unavailable" });
+      return;
+    }
     const pages = callbackState.pages || [];
     fillPageOptions(pages);
     const uniqueId = pages.length === 1 ? Number(pages[0].id) : null;
@@ -165,15 +190,13 @@ function setSidebarCollapsed(collapsed) {
 }
 
 $("toggleSidebar").onclick = () => setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
+document.querySelector('a[href="#diagnostics"]')?.addEventListener("click", (event) => {
+  event.preventDefault();
+  window.relayConsole.setTerminalCollapsed(false);
+});
 try { if (localStorage.getItem("agent-relay-console-sidebar") === "collapsed") setSidebarCollapsed(true); } catch {}
 
 window.relayConsole.onState(render);
-window.relayConsole.onLog((entry) => {
-  const output = $("consoleLog");
-  const prior = output.textContent === "等待操作。点击启动按钮后将在此显示脱敏日志。" ? "" : output.textContent;
-  output.textContent = `${prior}[${entry.component}] ${entry.text}`.slice(-12000);
-  output.scrollTop = output.scrollHeight;
-});
 new ResizeObserver(scheduleSurfaceReport).observe($("browserHost"));
 const scrollHost = document.querySelector(".surface") || document.querySelector(".workspace");
 scrollHost?.addEventListener("scroll", scheduleSurfaceReport, { passive: true });

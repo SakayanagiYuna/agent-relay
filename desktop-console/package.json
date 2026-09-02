@@ -5,7 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/ipc-contract.regression.js && node test/process-supervisor.regression.js && node test/shutdown-coordinator.regression.js && node test/renderer-state.regression.js && node test/window-dock.regression.js"
+    "test": "node test/ipc-contract.regression.js && node test/process-supervisor.regression.js && node test/shutdown-coordinator.regression.js && node test/renderer-state.regression.js && node test/window-dock.regression.js && node test/terminal-overlay.regression.js"
   },
   "devDependencies": {
     "electron": "^39.8.10"

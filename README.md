@@ -6,14 +6,14 @@
 
 运行中的任务或 Browser Evidence 在关闭窗口时会提示：默认保持运行，也可选择完成后自动退出；强制退出需再次确认，且可能缺少 Slack 终态。首次使用仍需在原生 Chrome 内由用户自行登录并明确选择 conversation 后 Connect Callback。真人登录、MFA、Windows 窗口聚焦行为需要在本机 GUI 环境验证。
 
-Agent Relay 是本地、按 allowlist 控制的 Slack-to-agent 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。工单默认使用 Codex，也可显式选择 Grok Build；终态 `CODEX_STATUS` 成功发送后，Relay 从同一个 `task_terminal` event 独立 fan-out 到可选 Browser Callback 和 Human Notification；Slack 仍是唯一生命周期事实来源。
+Agent Relay 是本地、按 allowlist 控制的 Slack-to-agent 执行中继。稳定协议名称是 `CODEX_TASK` 和 `CODEX_STATUS`。工单可显式选择 `codex` 或 `grok`；未写 `agent` 时使用本机默认值（Desktop Console 右栏可改，未配置则为 Codex）。终态 `CODEX_STATUS` 成功发送后，Relay 从同一个 `task_terminal` event 独立 fan-out 到可选 Browser Callback 和 Human Notification；Slack 仍是唯一生命周期事实来源。
 
 ## V5.7 / v1.1.0
 
 本版本相对 V5.6 的完整变更如下：
 
 - `CODEX_TASK` 协议仍固定为 schema version `1` 和既有必填字段；parser 为拒绝路径补充可审计的 `task_id` 提取、解析阶段、已识别字段和明确 reason，拒绝工单不会进入执行，编号可被审计追踪。
-- `agent` 是 `CODEX_TASK v1` 的可选扩展字段：省略或 `agent: codex` 使用既有 Codex Worker；`agent: grok` 使用本机 Grok Build CLI。Relay 不做自动 agent 路由或失败 fallback，Grok 任务使用 `workspace` sandbox、`acceptEdits` 权限模式和提示文件，绝不启用 `--always-approve`；若其 JSON 终态包含兼容 usage，仍进入既有本机账本和 Slack 审计。
+- `agent` 是 `CODEX_TASK v1` 的可选扩展字段：工单写明 `agent: codex` 或 `agent: grok` 时以工单为准；省略时使用本机 `.env` 的 `AGENT_RELAY_DEFAULT_AGENT`（Desktop Console 右栏可改，启动时从 `.env` 校准），未配置则为 `codex`。Relay 不做自动 agent 路由或失败 fallback，Grok 任务使用 `workspace` sandbox、`acceptEdits` 权限模式和提示文件，绝不启用 `--always-approve`；若其 JSON 终态包含兼容 usage，仍进入既有本机账本和 Slack 审计。
 - `conversation` 是可选扩展字段：省略或 `conversation: continue` 时，同一 worker 上相同 workspace、repo 和 agent 的后续工单续上一次 worker 会话（Codex `exec resume`，Grok `--resume`）。仅当工单写明 `conversation: new` 时才新开会话。换仓库或换 agent 不会续上。session id 只存在本机 `.agent-relay/worker-sessions.json`，不进入 Slack 工单。
 - 在配置频道发送精确文本 `AGENT_RELAY_HEALTH` 可探活所有收到该消息的 Relay 实例。探活不校验发件人、不会进入任务队列；每台实例立即回复自己的 `worker`、`running_tasks` 和 `queued_tasks`。
 - 每个终态任务会将 Codex JSONL 中实际返回的 token usage 写入本机 `state/usage-accounting.json`，并在 `CODEX_STATUS` 中以紧凑 `token_usage` 字段报告；CLI 未返回 usage 时明确报告 `unavailable`，不估算费用。

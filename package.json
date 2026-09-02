@@ -4,7 +4,7 @@
   "description": "A local, allowlisted Slack-to-Codex execution relay with optional browser evidence.",
   "main": "index.js",
   "scripts": {
-    "test": "npm run test:parser && npm run test:context-builder && npm run test:codex-discovery && npm run test:grok-discovery && npm run test:grok-worker && npm run test:worker-session && npm run test:projects-config && npm run test:doctor && npm run test:host-boundary && npm run test:rendered-state && npm run test:resource-routing && npm run test:worker-outcome && npm run test:slack-evidence-reference && npm run test:listener-callback-order && npm run test:health-command && npm run test:listener-health-command && npm run test:usage-accounting && npm run test:browser-callback-delay && npm run test:callback-target-registry && npm run test:callback-event && npm run test:callback-lifecycle && npm run test:human-notification && npm run test:terminal-fanout && npm run test:browser-callback && npm run test:browser-context && npm run test:browser-bootstrap && npm run test:browser-page-binding && npm run test:browser-runtime-registry && npm run test:execution-heartbeat && npm run test:status-audit && node runtime-observer.regression.js && npm run console:test",
+    "test": "npm run test:parser && npm run test:local-preferences && npm run test:context-builder && npm run test:codex-discovery && npm run test:grok-discovery && npm run test:grok-worker && npm run test:worker-session && npm run test:projects-config && npm run test:doctor && npm run test:host-boundary && npm run test:rendered-state && npm run test:resource-routing && npm run test:worker-outcome && npm run test:slack-evidence-reference && npm run test:listener-callback-order && npm run test:health-command && npm run test:listener-health-command && npm run test:usage-accounting && npm run test:browser-callback-delay && npm run test:callback-target-registry && npm run test:callback-event && npm run test:callback-lifecycle && npm run test:human-notification && npm run test:terminal-fanout && npm run test:browser-callback && npm run test:browser-context && npm run test:browser-bootstrap && npm run test:browser-page-binding && npm run test:browser-runtime-registry && npm run test:execution-heartbeat && npm run test:status-audit && node runtime-observer.regression.js && npm run console:test",
     "start": "node listener.js",
     "console:start": "npm --prefix desktop-console start",
     "console:test": "npm --prefix desktop-console test",
@@ -14,6 +14,7 @@
     "browser:configure-target": "node set-browser-callback-target.js",
     "browser:bind-arm": "node browser-bind-arm.js",
     "test:parser": "node task-parser.regression.js",
+    "test:local-preferences": "node local-preferences.regression.js",
     "test:context-builder": "node context-builder.regression.js",
     "test:codex-discovery": "node codex-discovery.regression.js",
     "test:grok-discovery": "node grok-discovery.regression.js",

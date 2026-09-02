@@ -12,6 +12,7 @@ const {
   checkTests,
   checkSecrets,
   checkCodex,
+  checkLocalPreferences,
   runDoctor,
 } = require("./doctor");
 
@@ -66,6 +67,28 @@ const codexResult = checkCodex({
   fsModule: { statSync: () => ({ isFile: () => true }) },
   runCommand: (_command, args) => ({ status: 0, stdout: args[0] === "--version" ? "codex 1" : "authenticated", stderr: "" }),
 });
+assert.strictEqual(checkLocalPreferences({
+  root: "C:\\relay",
+  env: {},
+  fsModule: { existsSync: () => false },
+}).status, "PASS");
+assert.strictEqual(checkLocalPreferences({
+  root: "C:\\relay",
+  env: {},
+  fsModule: {
+    existsSync: () => true,
+    readFileSync: () => "AGENT_RELAY_DEFAULT_AGENT=claude\n",
+  },
+}).status, "WARN");
+assert.match(checkLocalPreferences({
+  root: "C:\\relay",
+  env: {},
+  fsModule: {
+    existsSync: () => true,
+    readFileSync: () => "AGENT_RELAY_DEFAULT_AGENT=grok\n",
+  },
+}).detail, /grok/);
+
 assert.strictEqual(codexResult.status, "PASS", "Doctor uses the shared Codex discovery override");
 assert.match(codexResult.detail, /override/);
 

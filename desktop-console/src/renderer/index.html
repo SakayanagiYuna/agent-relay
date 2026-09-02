@@ -90,35 +90,13 @@
     </aside>
 
     <section id="overview" class="surface">
-      <div class="surface-tabs" role="tablist" aria-label="工作区域">
-        <button class="surface-tab active" type="button" role="tab" aria-selected="true">浏览器</button>
-        <span class="surface-context">当前 Relay 工作区</span>
-        <span class="surface-context muted">LOCAL</span>
-      </div>
-
-      <section id="taskPanel" class="task-panel" aria-labelledby="taskHeading">
-        <div class="panel-heading compact">
-          <div>
-            <span class="panel-kicker">RUNTIME SNAPSHOT</span>
-            <h1 id="taskHeading">当前任务</h1>
-          </div>
-          <span class="panel-hint">实时状态</span>
-        </div>
-        <div id="task" class="task-strip empty">当前没有任务</div>
-      </section>
-
       <section id="browserPanel" class="browser-panel" aria-labelledby="browserHeading">
-        <div class="panel-heading">
-          <div>
-            <span class="panel-kicker">BROWSER SURFACE</span>
-            <h2 id="browserHeading">Relay 浏览器</h2>
-          </div>
-          <span id="browserPanelState" class="panel-state" data-state="STOPPED">等待连接</span>
-        </div>
+        <h2 id="browserHeading" class="sr-only">Relay 浏览器</h2>
         <div id="browserHost" class="browser-host">
           <div class="browser-empty">
             <div class="browser-glyph" aria-hidden="true">⌁</div>
             <strong>浏览器工作区域</strong>
+            <span id="browserPanelState" class="panel-state" data-state="STOPPED">等待连接</span>
             <p id="browserDetail">Relay 专用 Chrome 将停靠在此区域，并复用已有 profile 登录态。</p>
             <div class="browser-actions">
               <button data-action="start-browser" id="restartBrowser" class="primary">启动浏览器</button>
@@ -127,58 +105,79 @@
           </div>
         </div>
       </section>
-
-      <section class="callback-panel" aria-labelledby="callbackHeading">
-        <div class="panel-heading compact">
-          <div>
-            <span class="panel-kicker">CALLBACK TARGET</span>
-            <h2 id="callbackHeading">连接对话</h2>
-          </div>
-          <span class="panel-hint">一点完成刷新、Bind 与 Arm</span>
-        </div>
-        <div class="callback-row">
-          <select id="pages" aria-label="ChatGPT conversation 列表"><option value="">打开对话后点 Connect Callback</option></select>
-          <button id="connect" class="primary">Connect Callback</button>
-        </div>
-        <p id="callbackMessage" class="callback-message">在 Relay Chrome 打开目标 conversation，然后点 Connect Callback。</p>
-      </section>
-
-      <section id="diagnostics" class="console-terminal" aria-labelledby="terminalHeading">
-        <div class="terminal-head">
-          <div>
-            <span class="terminal-kicker">LOCAL DIAGNOSTICS</span>
-            <strong id="terminalHeading">终端日志</strong>
-          </div>
-          <button data-action="start-listener">启动 Listener</button>
-        </div>
-        <p id="diagnostic"></p>
-        <pre id="consoleLog">等待操作。点击启动按钮后将在此显示脱敏日志。</pre>
-      </section>
     </section>
 
     <aside class="right-rail">
       <div class="right-heading">
         <div>
-          <span class="panel-kicker">RUNTIME FEED</span>
-          <h2>活动</h2>
+          <span class="panel-kicker">RUNTIME</span>
+          <h2>运行</h2>
         </div>
         <span class="live-indicator"><span aria-hidden="true"></span>实时</span>
       </div>
-      <div class="activity-list">
-        <section class="activity-card current-card">
-          <div class="activity-card-heading"><span class="activity-icon" aria-hidden="true">✦</span><span>当前活动</span></div>
-          <p id="activity">等待 Relay 状态</p>
-          <small>来自 Runtime 的脱敏摘要</small>
+      <div class="right-scroll">
+        <section class="agent-panel" aria-labelledby="defaultAgentHeading">
+          <div class="panel-heading compact">
+            <div>
+              <span class="panel-kicker">DEFAULT AGENT</span>
+              <h2 id="defaultAgentHeading">默认 Agent</h2>
+            </div>
+          </div>
+          <div class="callback-row">
+            <label class="select-wrap">
+              <select id="defaultAgent" aria-label="工单未指定 agent 时使用的本机默认值">
+                <option value="codex">codex</option>
+                <option value="grok">grok</option>
+              </select>
+            </label>
+          </div>
+          <p id="defaultAgentMessage" class="callback-message">写入 `.env` 的 `AGENT_RELAY_DEFAULT_AGENT`。工单写了 agent 时以工单为准。</p>
         </section>
-        <section class="activity-card">
-          <div class="activity-card-heading"><span class="activity-icon" aria-hidden="true">◌</span><span>Browser Evidence</span></div>
-          <p id="evidence" data-state="IDLE">IDLE</p>
-          <small>独立 headless capture，不使用可见浏览器。</small>
+
+        <section id="taskPanel" class="task-panel" aria-labelledby="taskHeading">
+          <div class="panel-heading compact">
+            <div>
+              <span class="panel-kicker">RUNTIME SNAPSHOT</span>
+              <h2 id="taskHeading">当前任务</h2>
+            </div>
+            <span class="panel-hint">实时状态</span>
+          </div>
+          <div id="task" class="task-strip empty">当前没有任务</div>
         </section>
-        <section class="audit-note">
-          <span class="note-mark" aria-hidden="true">i</span>
-          <p>这里仅显示状态摘要。完整 instruction、日志和审计详情继续保留在 Slack。</p>
+
+        <section class="callback-panel" aria-labelledby="callbackHeading">
+          <div class="panel-heading compact">
+            <div>
+              <span class="panel-kicker">CALLBACK TARGET</span>
+              <h2 id="callbackHeading">连接对话</h2>
+            </div>
+            <span class="panel-hint">一点完成刷新、Bind 与 Arm</span>
+          </div>
+          <div class="callback-row">
+            <label class="select-wrap">
+              <select id="pages" aria-label="ChatGPT conversation 列表"><option value="">打开对话后点 Connect Callback</option></select>
+            </label>
+            <button id="connect" class="primary">Connect Callback</button>
+          </div>
+          <p id="callbackMessage" class="callback-message">在 Relay Chrome 打开目标 conversation，然后点 Connect Callback。</p>
         </section>
+
+        <div class="activity-list">
+          <section class="activity-card current-card">
+            <div class="activity-card-heading"><span class="activity-icon" aria-hidden="true">✦</span><span>当前活动</span></div>
+            <p id="activity">等待 Relay 状态</p>
+            <small>来自 Runtime 的脱敏摘要</small>
+          </section>
+          <section class="activity-card">
+            <div class="activity-card-heading"><span class="activity-icon" aria-hidden="true">◌</span><span>Browser Evidence</span></div>
+            <p id="evidence" data-state="IDLE">IDLE</p>
+            <small>独立 headless capture，不使用可见浏览器。</small>
+          </section>
+          <section class="audit-note">
+            <span class="note-mark" aria-hidden="true">i</span>
+            <p>这里仅显示状态摘要。完整 instruction、日志和审计详情继续保留在 Slack。</p>
+          </section>
+        </div>
       </div>
     </aside>
   </main>

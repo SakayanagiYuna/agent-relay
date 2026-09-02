@@ -1,5 +1,7 @@
 "use strict";
 
+const { DEFAULT_AGENT, isAllowedAgent } = require("./local-preferences");
+
 function normalizeSlackText(rawText) {
   let text = String(rawText || "").trim();
 
@@ -37,7 +39,8 @@ function schemaValidationError(reason, parseStage, recognizedFields) {
   return error;
 }
 
-function parseCodexTask(text) {
+function parseCodexTask(text, { defaultAgent = DEFAULT_AGENT } = {}) {
+  if (!isAllowedAgent(defaultAgent)) throw new Error("unsupported_default_agent");
   const normalized = normalizeSlackText(text);
   if (!normalized.startsWith("CODEX_TASK")) return null;
 
@@ -47,7 +50,7 @@ function parseCodexTask(text) {
     target_worker: null,
     target_workspace: null,
     target_repo: null,
-    agent: "codex",
+    agent: null,
     conversation: "continue",
     instruction: null,
     browser_evidence: null,
@@ -83,7 +86,8 @@ function parseCodexTask(text) {
     if (!task[key]) throw schemaValidationError(`missing_${key}`, "required_fields", recognizedFields);
   }
 
-  if (!new Set(["codex", "grok"]).has(task.agent)) {
+  if (!recognizedFields.has("agent") || task.agent == null) task.agent = defaultAgent;
+  if (!isAllowedAgent(task.agent)) {
     throw schemaValidationError("unsupported_agent", "agent", recognizedFields);
   }
   if (!task.conversation) task.conversation = "continue";

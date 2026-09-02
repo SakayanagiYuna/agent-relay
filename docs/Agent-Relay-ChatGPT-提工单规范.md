@@ -13,7 +13,7 @@
 | ChatGPT 登录、Bind + Arm、callback target | 用户手动完成 | 不得操作 | 提供本机 Runtime / 控制页 / callback |
 | `.env`、token、cookie、profile、Slack 凭据 | 不写入工单 | 不读取或修改 | 仅按本机配置使用必要值 |
 
-`CODEX_TASK` 只用于让选定的 worker agent 在 allowlisted 仓库内执行工作。省略 `agent` 时固定使用 `codex`；目前可显式选择 `grok`（底层为 Grok Build CLI）。截图、Slack 上传和 callback 都是 Relay host 的职责，不能通过 instruction 转交给 worker。
+`CODEX_TASK` 只用于让选定的 worker agent 在 allowlisted 仓库内执行工作。工单可显式写 `agent: codex` 或 `agent: grok`（底层为 Grok Build CLI）；省略 `agent` 时使用该 Relay 主机 `.env` 中的 `AGENT_RELAY_DEFAULT_AGENT`（Desktop Console 右栏可改，启动时从 `.env` 校准），未配置则为 `codex`。截图、Slack 上传和 callback 都是 Relay host 的职责，不能通过 instruction 转交给 worker。
 
 ## 所有工单的字段顺序
 
@@ -26,7 +26,7 @@ task_id: TASK-XXX
 target_worker: <WORKER_ID>
 target_workspace: <WORKSPACE_ID>
 target_repo: <ALLOWLIST_REPO_ID>
-# 可选：agent: codex（默认）或 agent: grok
+# 可选：agent: codex 或 agent: grok。省略时使用本机默认值，未配置则为 codex
 # 可选：conversation: continue（默认，续上同一仓库同一 agent 的上一次会话）或 conversation: new
 # 可选 Browser Evidence 字段只能放在这里
 instruction: |
@@ -35,7 +35,7 @@ instruction: |
   验收：<预期结果与验证方式>
 ```
 
-必填字段为 `schema_version`、`task_id`、`target_worker`、`target_workspace`、`target_repo` 和 `instruction`。`agent` 是可选字段，合法值为 `codex`（默认）和 `grok`；不支持自动选择、fallback 或模型名。`conversation` 是可选字段，合法值为 `continue`（默认）和 `new`。省略或 `continue` 时，Relay 续上该 worker 上同一 `target_workspace` + `target_repo` + `agent` 的上一次会话；换仓库、换 agent，或尚未有会话时自动新开。只有工单写明 `conversation: new` 才强制新对话。不要把 session id 写入工单。`target_repo` 是 allowlist 逻辑名称，不是文件系统路径。不要填写 `cwd`、shell、executable、`--cd`、`--sandbox`、approval、Git trust flags 或本机配置项。
+必填字段为 `schema_version`、`task_id`、`target_worker`、`target_workspace`、`target_repo` 和 `instruction`。`agent` 是可选字段，合法值为 `codex` 和 `grok`；工单写明时以工单为准，省略时使用本机默认值，未配置则为 `codex`。不支持自动选择、失败 fallback 或模型名。`conversation` 是可选字段，合法值为 `continue`（默认）和 `new`。省略或 `continue` 时，Relay 续上该 worker 上同一 `target_workspace` + `target_repo` + `agent` 的上一次会话；换仓库、换 agent，或尚未有会话时自动新开。只有工单写明 `conversation: new` 才强制新对话。不要把 session id 写入工单。`target_repo` 是 allowlist 逻辑名称，不是文件系统路径。不要填写 `cwd`、shell、executable、`--cd`、`--sandbox`、approval、Git trust flags 或本机配置项。
 
 ## 选择 `grok`
 

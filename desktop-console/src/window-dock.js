@@ -191,28 +191,39 @@ class BrowserDock {
     return { attached: false, hwnd: null };
   }
 
-  hideFromTaskbar(hwnd) {
+  hideFromTaskbar(hwnd, consoleHwnd = null) {
+    if (!hwnd || (consoleHwnd && hwnd === consoleHwnd)) return;
     const api = this.ensureApi();
     const exStyle = (Number(api.getWindowLongPtr(hwnd, GWL_EXSTYLE)) | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
     api.setWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
-    if (typeof api.getWindow === "function") {
-      const owner = BigInt(api.getWindow(hwnd, GW_OWNER) || 0);
-      if (owner && owner !== hwnd) {
-        const ownerEx = (Number(api.getWindowLongPtr(owner, GWL_EXSTYLE)) | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
-        api.setWindowLongPtr(owner, GWL_EXSTYLE, ownerEx);
-      }
-    }
   }
 
-  hideSiblingChromeWindows() {
+  hideChromeOwnerWindow(hwnd, consoleHwnd) {
+    const api = this.ensureApi();
+    if (typeof api.getWindow !== "function") return;
+    const owner = BigInt(api.getWindow(hwnd, GW_OWNER) || 0);
+    if (owner && owner !== hwnd) this.hideFromTaskbar(owner, consoleHwnd);
+  }
+
+  hideSiblingChromeWindows(consoleHwnd) {
     const api = this.ensureApi();
     if (!this.pid) return;
     for (const className of [CHROME_WINDOW_CLASS, "Chrome_WidgetWin_0"]) {
       for (const hwnd of listChromeWindows(this.pid, api, className)) {
         if (hwnd === this.hwnd) continue;
-        this.hideFromTaskbar(hwnd);
+        this.hideFromTaskbar(hwnd, consoleHwnd);
+        this.hideChromeOwnerWindow(hwnd, consoleHwnd);
       }
     }
+  }
+
+  restoreConsoleCaption(consoleHwnd) {
+    if (!consoleHwnd) return;
+    const api = this.ensureApi();
+    const currentEx = Number(api.getWindowLongPtr(consoleHwnd, GWL_EXSTYLE));
+    const exStyle = (currentEx | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW;
+    api.setWindowLongPtr(consoleHwnd, GWL_EXSTYLE, exStyle);
+    api.setWindowPos(consoleHwnd, 0n, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
   }
 
   applyChromeFrame(ownerHwnd) {
@@ -220,6 +231,9 @@ class BrowserDock {
     if (!this.hwnd || !api.isWindow(this.hwnd)) return false;
     // Chrome Aura drops click/wheel input if this HWND is a WS_CHILD of Electron.
     if (typeof api.setParent === "function") api.setParent(this.hwnd, 0n);
+    // Hide Chrome's original owner before re-owning to Electron. WS_EX_TOOLWINDOW
+    // on the Console HWND removes min/max and shrinks Close.
+    this.hideChromeOwnerWindow(this.hwnd, ownerHwnd);
     const currentStyle = Number(api.getWindowLongPtr(this.hwnd, GWL_STYLE));
     const style = (currentStyle | WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN) & ~WS_CHILD & ~WS_CAPTION & ~WS_THICKFRAME & ~WS_MINIMIZEBOX & ~WS_MAXIMIZEBOX & ~WS_SYSMENU;
     api.setWindowLongPtr(this.hwnd, GWL_STYLE, style);
@@ -227,8 +241,9 @@ class BrowserDock {
     const exStyle = (currentEx | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
     api.setWindowLongPtr(this.hwnd, GWL_EXSTYLE, exStyle);
     api.setWindowLongPtr(this.hwnd, GWLP_HWNDPARENT, ownerHwnd);
-    this.hideFromTaskbar(this.hwnd);
-    this.hideSiblingChromeWindows();
+    this.hideFromTaskbar(this.hwnd, ownerHwnd);
+    this.hideSiblingChromeWindows(ownerHwnd);
+    this.restoreConsoleCaption(ownerHwnd);
     this.parentHwnd = ownerHwnd;
     this.framed = true;
     return true;
@@ -262,10 +277,20 @@ class BrowserDock {
   }
 
   raise() {
-    if (!this.attached || !this.hwnd) return false;
+    return this.raiseHwnd(this.hwnd);
+  }
+
+  raiseHwnd(hwnd) {
+    if (!hwnd) return false;
     const api = this.ensureApi();
-    if (!api.isWindow(this.hwnd)) return false;
-    api.setWindowPos(this.hwnd, 0n, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!api.isWindow(hwnd)) return false;
+    api.setWindowPos(hwnd, 0n, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return true;
+  }
+
+  setOwner(hwnd, ownerHwnd) {
+    if (!hwnd || !ownerHwnd) return false;
+    this.ensureApi().setWindowLongPtr(hwnd, GWLP_HWNDPARENT, ownerHwnd);
     return true;
   }
 

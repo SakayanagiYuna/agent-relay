@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agent Relay 终端</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="terminal-overlay-body">
+  <section id="diagnostics" class="console-terminal" aria-labelledby="terminalHeading">
+    <div class="terminal-head">
+      <button id="toggleTerminal" class="icon-button terminal-toggle" type="button" aria-controls="diagnostics" aria-expanded="true" title="收起终端">
+        <span aria-hidden="true">⌄</span>
+        <span class="sr-only">收起终端</span>
+      </button>
+      <div>
+        <span class="terminal-kicker">LOCAL DIAGNOSTICS</span>
+        <strong id="terminalHeading">终端日志</strong>
+      </div>
+      <button data-action="start-listener">启动 Listener</button>
+    </div>
+    <p id="diagnostic"></p>
+    <pre id="consoleLog">等待操作。点击启动按钮后将在此显示脱敏日志。</pre>
+  </section>
+  <script src="terminal.js"></script>
+</body>
+</html>
